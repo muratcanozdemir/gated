@@ -1,0 +1,33 @@
+# ~/.config/gated/config.yaml — developer workstation config.
+#
+# No root required. Runs as your user. Uses inotify+quarantine.
+
+watch_paths:
+  - path: ~/.cache/uv
+    ecosystem: pypi
+  - path: ~/.cache/pip
+    ecosystem: pypi
+  - path: ~/go/pkg/mod/cache
+    ecosystem: go
+  - path: ~/.m2/repository
+    ecosystem: maven
+  - path: ~/.cargo/registry
+    ecosystem: cargo
+
+tools:
+  syft: ~/.local/bin/syft
+  grype: ~/.local/bin/grype
+  osv_scanner: ~/.local/bin/osv-scanner
+  opa: ~/.local/bin/opa
+
+policy_dir: ~/.config/gated/policy
+verdict_dir: ~/.local/share/gated/verdicts
+
+# Force quarantine mode — no sudo needed.
+watcher_mode: quarantine
+
+# Start in warn-only until you're confident in your policies.
+warn_only: true
+
+scan_timeout_seconds: 30
+log_level: info

@@ -1,0 +1,88 @@
+{
+  "approved_licenses": [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unlicense",
+    "CC0-1.0",
+    "0BSD",
+    "BlueOak-1.0.0",
+    "BSL-1.0",
+    "Zlib",
+    "PostgreSQL",
+    "Python-2.0"
+  ],
+
+  "blocked_licenses": [
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "SSPL-1.0",
+    "Elastic-2.0",
+    "BUSL-1.1"
+  ],
+
+  "blocked_packages": {
+    "pypi/jeIlyfish": "typosquat of jellyfish — known malware (2019)",
+    "pypi/python3-dateutil": "typosquat of python-dateutil — credential stealer",
+    "pypi/colourama": "typosquat of colorama — known malware",
+    "npm/event-stream": "compromised in v3.3.6 — flatmap-stream incident",
+    "npm/ua-parser-js": "supply chain attack in 0.7.29/0.8.0/1.0.0",
+    "npm/coa": "compromised — crypto miner injection",
+    "cargo/rustdecimal": "typosquat of rust_decimal — known malware"
+  },
+
+  "typosquat_patterns": {
+    "pypi": [
+      "python-",
+      "python3-",
+      "-python",
+      "py-utils",
+      "colour"
+    ],
+    "npm": [
+      "lodahs",
+      "axois",
+      "reacr",
+      "expresss"
+    ]
+  },
+
+  "approved_maven_groups": [
+    "org.apache",
+    "org.springframework",
+    "com.google",
+    "com.fasterxml",
+    "org.slf4j",
+    "ch.qos.logback",
+    "org.mule",
+    "com.mulesoft",
+    "io.netty",
+    "org.eclipse",
+    "jakarta"
+  ],
+
+  "approved_go_prefixes": [
+    "github.com/",
+    "golang.org/",
+    "google.golang.org/",
+    "go.uber.org/",
+    "gopkg.in/"
+  ],
+
+  "known_exploited_cves": [
+    "CVE-2021-44228",
+    "CVE-2021-45046",
+    "CVE-2023-44487",
+    "CVE-2024-3094",
+    "CVE-2023-38545",
+    "CVE-2023-32681",
+    "CVE-2022-42889"
+  ],
+
+  "max_total_vulnerabilities": 15,
+
+  "require_clean_scan": false
+}

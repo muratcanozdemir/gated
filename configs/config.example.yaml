@@ -1,0 +1,51 @@
+# /etc/gated/config.yaml — gate daemon configuration.
+#
+# Paths support ~ expansion and $ENV variable substitution.
+
+watch_paths:
+  # PyPI — covers both pip and uv caches.
+  - path: ~/.cache/uv
+    ecosystem: pypi
+  - path: ~/.cache/pip
+    ecosystem: pypi
+
+  # Go modules cache.
+  - path: ~/go/pkg/mod/cache
+    ecosystem: go
+
+  # Maven local repository.
+  - path: ~/.m2/repository
+    ecosystem: maven
+
+  # Cargo registry cache.
+  - path: ~/.cargo/registry
+    ecosystem: cargo
+
+  # npm cache (content-addressed — package resolution is best-effort).
+  # - path: ~/.npm
+  #   ecosystem: npm
+
+tools:
+  syft: syft
+  grype: grype
+  osv_scanner: osv-scanner
+  opa: opa
+
+policy_dir: /etc/gated/policy
+verdict_dir: /var/lib/gated/verdicts
+
+# warn_only: true logs denials but allows everything through.
+# Use this for rollout — watch logs, tune policy, then flip to false.
+warn_only: true
+
+# Watcher mode controls the interception mechanism.
+#   auto:       try fanotify (needs CAP_SYS_ADMIN), fall back to inotify+quarantine.
+#   fanotify:   force kernel-enforced gate (Linux only, requires root/CAP_SYS_ADMIN).
+#   quarantine: force inotify+quarantine rename (no privileges, all platforms).
+# "auto" is the right default for most deployments.
+watcher_mode: auto
+
+# Seconds before a scan is forcibly terminated.
+scan_timeout_seconds: 30
+
+log_level: info  # debug | info | warn | error

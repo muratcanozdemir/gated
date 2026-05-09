@@ -1,0 +1,30 @@
+[Unit]
+Description=Gate Daemon — unprivileged inotify+quarantine mode
+Documentation=https://github.com/internal/gate-daemon
+After=network.target
+
+[Service]
+Type=simple
+User=gated
+Group=gated
+ExecStart=/usr/local/bin/gated -config /etc/gated/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# No special capabilities needed for quarantine mode.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gated
+# Need write access to user cache dirs for quarantine renames.
+# Adjust these to match your watch_paths.
+ReadWritePaths=/home
+PrivateTmp=yes
+
+Restart=on-failure
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gated
+
+[Install]
+WantedBy=multi-user.target

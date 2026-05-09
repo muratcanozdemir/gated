@@ -1,0 +1,20 @@
+# Install: mkdir -p ~/.config/systemd/user && cp gated-user.service ~/.config/systemd/user/gated.service
+# Enable:  systemctl --user enable --now gated
+# Logs:    journalctl --user -u gated -f
+# Reload:  systemctl --user reload gated
+
+[Unit]
+Description=Gate Daemon — developer workstation (quarantine mode)
+Documentation=https://github.com/internal/gate-daemon
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gated -config %h/.config/gated/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Environment=HOME=%h
+
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

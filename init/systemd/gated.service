@@ -1,0 +1,29 @@
+[Unit]
+Description=Gate Daemon — fanotify-based package curation
+Documentation=https://github.com/internal/gate-daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gated -config /etc/gated/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Security hardening — only the capabilities we need.
+AmbientCapabilities=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/gated
+PrivateTmp=yes
+
+# Restart on failure with backoff.
+Restart=on-failure
+RestartSec=5s
+
+# Logging goes to journald via stderr.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gated
+
+[Install]
+WantedBy=multi-user.target
