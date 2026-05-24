@@ -29,6 +29,9 @@ pip install requests
  [pip continues or fails]
 ```
 
+## Visualisation
+<img src="./gated.svg">
+
 The interception mechanism adapts to the platform and available privileges:
 
 | Mode | Platform | Mechanism | Privileges | Guarantee |
