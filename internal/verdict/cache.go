@@ -27,7 +27,7 @@ type Entry struct {
 type Cache struct {
 	dir     string
 	mu      sync.RWMutex
-	entries map[string]*Entry     // keyed by file content hash
+	entries map[string]*Entry        // keyed by file content hash
 	pending map[string]chan struct{} // signals when a scan completes
 }
 

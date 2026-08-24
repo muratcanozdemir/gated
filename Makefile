@@ -15,7 +15,7 @@ LDFLAGS    := -s -w \
 	-X main.buildDate=$(BUILD_DATE)
 GOFLAGS    := -trimpath -ldflags="$(LDFLAGS)"
 
-.PHONY: build test vet lint install install-config install-tools validate \
+.PHONY: build test vet lint fmt install install-config install-tools validate \
         clean build-all build-linux build-darwin build-windows check tidy
 
 ## Build
@@ -44,6 +44,12 @@ test:
 
 vet:
 	$(GO) vet ./...
+
+fmt:
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt needed on:"; echo "$$unformatted"; exit 1; \
+	fi
 
 lint: vet
 	@command -v staticcheck >/dev/null 2>&1 && staticcheck ./... || echo "staticcheck not installed, skipping"
@@ -78,7 +84,7 @@ install-tools:
 validate: build
 	./$(BINARY) -config configs/config.example.yaml -validate
 
-check: build validate vet
+check: build validate vet fmt test
 	@echo "All checks passed."
 
 ## Clean

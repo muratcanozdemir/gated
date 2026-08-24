@@ -18,7 +18,7 @@ type Vulnerability struct {
 	CVSS        float64 `json:"cvss"`
 	FixedIn     string  `json:"fixed_in,omitempty"`
 	Description string  `json:"description,omitempty"`
-	Source       string  `json:"source"` // "grype" or "osv"
+	Source      string  `json:"source"` // "grype" or "osv"
 }
 
 // --- syft ---
@@ -36,8 +36,8 @@ type SyftArtifact struct {
 }
 
 type SyftLicense struct {
-	Value  string `json:"value"`
-	Type   string `json:"spdxExpression"`
+	Value string `json:"value"`
+	Type  string `json:"spdxExpression"`
 }
 
 func runSyft(ctx context.Context, bin, path string) (*SyftOutput, error) {
@@ -68,11 +68,11 @@ type grypeMatch struct {
 }
 
 type grypeVuln struct {
-	ID       string   `json:"id"`
-	Severity string   `json:"severity"`
-	Fix      grypeFix `json:"fix"`
-	Cvss     []grypeCVSS `json:"cvss"`
-	Description string `json:"description"`
+	ID          string      `json:"id"`
+	Severity    string      `json:"severity"`
+	Fix         grypeFix    `json:"fix"`
+	Cvss        []grypeCVSS `json:"cvss"`
+	Description string      `json:"description"`
 }
 
 type grypeFix struct {

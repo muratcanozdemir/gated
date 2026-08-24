@@ -13,12 +13,12 @@ import (
 
 // ScanResult aggregates all tool outputs for policy evaluation.
 type ScanResult struct {
-	Package         *resolver.Package  `json:"package"`
-	SBOM            *SyftOutput        `json:"sbom,omitempty"`
-	Vulnerabilities []Vulnerability    `json:"vulnerabilities"`
-	Licenses        []string           `json:"licenses"`
-	ScannedAt       string             `json:"scanned_at"`
-	Errors          []string           `json:"errors,omitempty"`
+	Package         *resolver.Package `json:"package"`
+	SBOM            *SyftOutput       `json:"sbom,omitempty"`
+	Vulnerabilities []Vulnerability   `json:"vulnerabilities"`
+	Licenses        []string          `json:"licenses"`
+	ScannedAt       string            `json:"scanned_at"`
+	Errors          []string          `json:"errors,omitempty"`
 }
 
 // Orchestrator runs all scan tools and aggregates results.

@@ -224,10 +224,7 @@ func isArtifactFile(path string) bool {
 		return true
 	}
 	// Handle .tar.gz (double extension).
-	if strings.HasSuffix(strings.ToLower(path), ".tar.gz") {
-		return true
-	}
-	return false
+	return strings.HasSuffix(strings.ToLower(path), ".tar.gz")
 }
 
 // isMetadataFile filters out non-artifact files.

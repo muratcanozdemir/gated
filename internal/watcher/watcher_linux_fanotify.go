@@ -248,8 +248,5 @@ func isArtifactFile(path string) bool {
 	case ".whl", ".tar", ".gz", ".zip", ".jar", ".crate", ".tgz", ".egg":
 		return true
 	}
-	if strings.HasSuffix(strings.ToLower(path), ".tar.gz") {
-		return true
-	}
-	return false
+	return strings.HasSuffix(strings.ToLower(path), ".tar.gz")
 }

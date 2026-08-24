@@ -33,8 +33,8 @@ type Watcher interface {
 
 // Config bundles the common parameters all platform watchers need.
 type Config struct {
-	Paths        []config.WatchPath
-	DecisionFn   DecisionFunc
-	WarnOnly     bool
-	WatcherMode  Mode
+	Paths       []config.WatchPath
+	DecisionFn  DecisionFunc
+	WarnOnly    bool
+	WatcherMode Mode
 }
