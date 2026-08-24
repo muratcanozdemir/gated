@@ -29,7 +29,6 @@ tools:
   syft: syft
   grype: grype
   osv_scanner: osv-scanner
-  opa: opa
 
 policy_dir: /etc/gated/policy
 verdict_dir: /var/lib/gated/verdicts

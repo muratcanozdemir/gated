@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -47,7 +48,7 @@ func runSyft(ctx context.Context, bin, path string) (*SyftOutput, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s: %s", err, stderr.String())
+		return nil, fmt.Errorf("%w: %s", err, stderr.String())
 	}
 
 	var out SyftOutput
@@ -93,11 +94,10 @@ func runGrype(ctx context.Context, bin, path string) ([]Vulnerability, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	// grype exits 0 unless --fail-on is set (it isn't here) or a real
+	// error occurred, so any non-zero exit is a genuine failure.
 	if err := cmd.Run(); err != nil {
-		// Grype exits non-zero when vulnerabilities found — that's expected.
-		if stderr.Len() > 0 && !strings.Contains(stderr.String(), "vulnerability") {
-			return nil, fmt.Errorf("%s: %s", err, stderr.String())
-		}
+		return nil, fmt.Errorf("%w: %s", err, stderr.String())
 	}
 
 	var out grypeOutput
@@ -169,9 +169,12 @@ func runOSV(ctx context.Context, bin string, pkg *resolver.Package) ([]Vulnerabi
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// osv-scanner exits non-zero when vulns found.
-		if stdout.Len() == 0 {
-			return nil, fmt.Errorf("%s: %s", err, stderr.String())
+		// osv-scanner documents exit code 1 as "vulnerabilities found",
+		// not a failure; anything else (including context deadlines) is
+		// a genuine error.
+		var exitErr *exec.ExitError
+		if !(errors.As(err, &exitErr) && exitErr.ExitCode() == 1) {
+			return nil, fmt.Errorf("%w: %s", err, stderr.String())
 		}
 	}
 

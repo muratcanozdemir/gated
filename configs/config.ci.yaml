@@ -10,7 +10,6 @@ tools:
   syft: syft
   grype: grype
   osv_scanner: osv-scanner
-  opa: opa
 
 policy_dir: ./policy
 verdict_dir: ./.ci-verdicts

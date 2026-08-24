@@ -10,8 +10,8 @@ import rego.v1
 # Deny explicitly blocklisted packages (known malware, abandoned, etc.)
 deny contains msg if {
     key := sprintf("%s/%s", [input["package"].ecosystem, input["package"].name])
-    key in data.blocked_packages
-    msg := sprintf("blocklisted package: %s/%s — %s", [input["package"].ecosystem, input["package"].name, data.blocked_packages[key]])
+    reason := data.blocked_packages[key]
+    msg := sprintf("blocklisted package: %s/%s — %s", [input["package"].ecosystem, input["package"].name, reason])
 }
 
 # Deny packages with names that are suspiciously similar to popular packages.

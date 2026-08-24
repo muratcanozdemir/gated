@@ -84,6 +84,8 @@ func newInotifyQuarantineWatcher(wcfg Config) (Watcher, error) {
 			"mode", "inotify+quarantine", "watches", count)
 	}
 
+	startSeenPruner(w.done, qEngine)
+
 	return w, nil
 }
 

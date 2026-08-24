@@ -83,7 +83,6 @@ install_tool_user() {
 SYFT_VERSION="${SYFT_VERSION:-1.20.0}"
 GRYPE_VERSION="${GRYPE_VERSION:-0.87.0}"
 OSV_SCANNER_VERSION="${OSV_SCANNER_VERSION:-1.9.1}"
-OPA_VERSION="${OPA_VERSION:-1.4.2}"
 
 install_tool_user "syft" \
     "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_${OS}_${ARCH}.tar.gz" \
@@ -97,9 +96,8 @@ install_tool_user "osv-scanner" \
     "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_${OSV_SCANNER_VERSION}_${OS}_${ARCH}.tar.gz" \
     "osv-scanner"
 
-install_tool_user "opa" \
-    "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_${OS}_${ARCH}_static" \
-    "opa"
+# opa is no longer needed — policy compilation/evaluation runs in-process
+# via the OPA Go SDK (internal/policy).
 
 # Warm grype DB.
 echo "[init] Updating grype vulnerability database..."

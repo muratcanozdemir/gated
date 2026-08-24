@@ -13,9 +13,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  OPA_VERSION: "1.4.2"
-
 jobs:
   fmt:
     name: gofmt
@@ -70,10 +67,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Install opa
-        run: |
-          curl -sSfL "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static" -o /usr/local/bin/opa
-          chmod +x /usr/local/bin/opa
+      # Policy compilation runs in-process via the OPA Go SDK — no opa
+      # binary needed here.
       - run: make build
       - run: ./gated -config configs/config.ci.yaml -validate
 

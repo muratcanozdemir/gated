@@ -1,15 +1,16 @@
 package policy
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"github.com/open-policy-agent/opa/v1/rego"
 )
 
 // Verdict is the policy evaluation result.
@@ -19,69 +20,49 @@ type Verdict struct {
 }
 
 // Engine evaluates scan results against OPA policies.
+//
+// Policies are compiled once (at construction and on each ValidatePolicies
+// call) into a PreparedEvalQuery, which Evaluate reuses for every decision.
+// This avoids spawning an `opa` subprocess and recompiling the rego bundle
+// from disk on every package-install decision — the daemon sits synchronously
+// in the install path, so that cost was paid on every cache miss.
 type Engine struct {
-	opaBin    string
 	policyDir string
+
+	mu    sync.RWMutex
+	query rego.PreparedEvalQuery
 }
 
-func NewEngine(opaBin, policyDir string) (*Engine, error) {
-	if _, err := exec.LookPath(opaBin); err != nil {
-		return nil, fmt.Errorf("opa binary not found: %s", opaBin)
-	}
+func NewEngine(policyDir string) (*Engine, error) {
 	if _, err := os.Stat(policyDir); err != nil {
 		return nil, fmt.Errorf("policy dir: %w", err)
 	}
-	return &Engine{
-		opaBin:    opaBin,
-		policyDir: policyDir,
-	}, nil
+	return &Engine{policyDir: policyDir}, nil
 }
 
-// Evaluate runs all rego policies in the policy dir against the input.
+// Evaluate runs the prepared query (data.gate.deny) against the input.
 // Returns denied=true if any policy produces a deny reason.
 func (e *Engine) Evaluate(inputJSON []byte) (*Verdict, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Write input to a temp file — avoid shell injection via pipe.
-	tmpInput, err := os.CreateTemp("", "gate-input-*.json")
+	var input interface{}
+	if err := json.Unmarshal(inputJSON, &input); err != nil {
+		return nil, fmt.Errorf("parse input: %w", err)
+	}
+
+	e.mu.RLock()
+	query := e.query
+	e.mu.RUnlock()
+
+	rs, err := query.Eval(ctx, rego.EvalInput(input))
 	if err != nil {
-		return nil, fmt.Errorf("create temp input: %w", err)
-	}
-	defer os.Remove(tmpInput.Name())
-
-	if _, err := tmpInput.Write(inputJSON); err != nil {
-		tmpInput.Close()
-		return nil, fmt.Errorf("write temp input: %w", err)
-	}
-	tmpInput.Close()
-
-	// Build a bundle from the policy directory.
-	// Query: data.gate.deny — collects all deny reasons across policies.
-	cmd := exec.CommandContext(ctx, e.opaBin, "eval",
-		"--input", tmpInput.Name(),
-		"--data", e.policyDir,
-		"--format", "json",
-		"data.gate.deny",
-	)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		// OPA returns non-zero on eval errors, not on policy deny.
-		return nil, fmt.Errorf("opa eval: %s (stderr: %s)", err, stderr.String())
-	}
-
-	var opaResult opaEvalOutput
-	if err := json.Unmarshal(stdout.Bytes(), &opaResult); err != nil {
-		return nil, fmt.Errorf("parse opa output: %w", err)
+		return nil, fmt.Errorf("policy eval: %w", err)
 	}
 
 	verdict := &Verdict{Allowed: true}
 
-	for _, r := range opaResult.Result {
+	for _, r := range rs {
 		for _, expr := range r.Expressions {
 			reasons, ok := extractReasons(expr.Value)
 			if ok && len(reasons) > 0 {
@@ -98,40 +79,49 @@ func (e *Engine) Evaluate(inputJSON []byte) (*Verdict, error) {
 	return verdict, nil
 }
 
-// ValidatePolicies runs opa check against the policy dir.
+// ValidatePolicies (re)compiles every .rego/.json/.yaml file in the policy
+// dir into a fresh prepared query and, only on success, swaps it in — a
+// syntax or compile error leaves the previously-loaded policies live. This
+// is called once at startup and again on each SIGHUP reload.
 func (e *Engine) ValidatePolicies() error {
-	files, err := filepath.Glob(filepath.Join(e.policyDir, "*.rego"))
-	if err != nil || len(files) == 0 {
+	regoFiles, err := filepath.Glob(filepath.Join(e.policyDir, "*.rego"))
+	if err != nil {
+		return fmt.Errorf("glob policy dir: %w", err)
+	}
+	if len(regoFiles) == 0 {
 		return fmt.Errorf("no .rego files in %s", e.policyDir)
 	}
 
-	args := []string{"check"}
-	args = append(args, files...)
-
-	cmd := exec.Command(e.opaBin, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("opa check failed: %s", stderr.String())
+	var dataFiles []string
+	for _, pattern := range []string{"*.json", "*.yaml", "*.yml"} {
+		matches, err := filepath.Glob(filepath.Join(e.policyDir, pattern))
+		if err != nil {
+			return fmt.Errorf("glob policy dir: %w", err)
+		}
+		dataFiles = append(dataFiles, matches...)
 	}
+
+	loadPaths := append(append([]string{}, regoFiles...), dataFiles...)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pq, err := rego.New(
+		rego.Query("data.gate.deny"),
+		rego.Load(loadPaths, nil),
+	).PrepareForEval(ctx)
+	if err != nil {
+		return fmt.Errorf("compile policies: %w", err)
+	}
+
+	e.mu.Lock()
+	e.query = pq
+	e.mu.Unlock()
+
 	return nil
 }
 
 // --- OPA output parsing ---
-
-type opaEvalOutput struct {
-	Result []opaResultSet `json:"result"`
-}
-
-type opaResultSet struct {
-	Expressions []opaExpression `json:"expressions"`
-}
-
-type opaExpression struct {
-	Value interface{} `json:"value"`
-	Text  string      `json:"text"`
-}
 
 // extractReasons handles OPA's set output format.
 // data.gate.deny returns a set of strings (reasons).

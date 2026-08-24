@@ -3,12 +3,13 @@
 package watcher
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -58,6 +59,7 @@ type FanotifyWatcher struct {
 	decisionFn DecisionFunc
 	warnOnly   bool
 	selfPid    int32
+	closed     atomic.Bool
 }
 
 func newFanotifyWatcher(wcfg Config) (Watcher, error) {
@@ -158,7 +160,7 @@ func (w *FanotifyWatcher) handleEvent(event *fanotifyEventMetadata) {
 		return
 	}
 
-	ecosystem := w.resolveEcosystem(path)
+	ecosystem := resolveEcosystem(w.paths, path)
 
 	// FAN_CLOSE_WRITE: fire-and-forget pre-scan to warm the verdict cache.
 	if event.Mask&fanCloseWrite != 0 && event.Mask&fanOpenPerm == 0 {
@@ -175,8 +177,13 @@ func (w *FanotifyWatcher) handleEvent(event *fanotifyEventMetadata) {
 			return
 		}
 
-		comm := readComm(event.Pid)
-		slog.Info("intercepted", "path", path, "ecosystem", ecosystem, "pid", event.Pid, "comm", comm)
+		// readComm does a synchronous /proc/<pid>/comm read purely for
+		// log attribution — only pay for it when Info logging is
+		// actually enabled, since this runs before the kernel unfreezes
+		// the calling process.
+		if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
+			slog.Info("intercepted", "path", path, "ecosystem", ecosystem, "pid", event.Pid, "comm", readComm(event.Pid))
+		}
 
 		allowed := w.decisionFn(path, ecosystem, event.Pid)
 		if allowed || w.warnOnly {
@@ -185,7 +192,7 @@ func (w *FanotifyWatcher) handleEvent(event *fanotifyEventMetadata) {
 			}
 			w.respond(event.Fd, fanAllow)
 		} else {
-			slog.Warn("DENIED", "path", path, "ecosystem", ecosystem, "pid", event.Pid, "comm", comm)
+			slog.Warn("DENIED", "path", path, "ecosystem", ecosystem, "pid", event.Pid, "comm", readComm(event.Pid))
 			w.respond(event.Fd, fanDeny)
 		}
 	}
@@ -199,54 +206,20 @@ func (w *FanotifyWatcher) respond(fd int32, response uint32) {
 	}
 }
 
-func (w *FanotifyWatcher) resolveEcosystem(path string) string {
-	for _, wp := range w.paths {
-		if strings.HasPrefix(path, wp.Path) {
-			return wp.Ecosystem
-		}
-	}
-	return ""
-}
-
 func (w *FanotifyWatcher) Close() error {
+	if !w.closed.CompareAndSwap(false, true) {
+		return nil // already closed
+	}
 	return unix.Close(w.fd)
 }
 
-// --- shared helpers (used by both backends) ---
-
+// readComm reads /proc/<pid>/comm for logging. Callers on the fanotify hot
+// path must only call this when Info-level logging is actually enabled —
+// it's a synchronous procfs read on every intercepted event otherwise.
 func readComm(pid int32) string {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
 	if err != nil {
 		return "unknown"
 	}
 	return strings.TrimSpace(string(data))
-}
-
-func isMetadataFile(path string) bool {
-	base := filepath.Base(path)
-	lower := strings.ToLower(base)
-	switch {
-	case lower == "go.sum", lower == "go.mod":
-		return true
-	case lower == "package-lock.json", lower == "yarn.lock":
-		return true
-	case lower == "cargo.lock", lower == "cargo.toml":
-		return true
-	case lower == "requirements.txt", lower == "pyproject.toml":
-		return true
-	case strings.HasSuffix(lower, ".pom"), strings.HasSuffix(lower, ".xml"):
-		return true
-	case strings.HasPrefix(lower, "."):
-		return true
-	}
-	return false
-}
-
-func isArtifactFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".whl", ".tar", ".gz", ".zip", ".jar", ".crate", ".tgz", ".egg":
-		return true
-	}
-	return strings.HasSuffix(strings.ToLower(path), ".tar.gz")
 }

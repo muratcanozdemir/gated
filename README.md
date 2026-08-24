@@ -264,16 +264,17 @@ cache is invalidated on reload.
 
 ## Scan tools
 
-gated shells out to four tools. All are Apache-2.0 licensed:
+gated shells out to three tools, all Apache-2.0 licensed. Policy evaluation
+(OPA/Rego) runs in-process via the OPA Go SDK — no external `opa` binary
+required.
 
 | Tool | Purpose | Project |
 |------|---------|---------|
 | [syft](https://github.com/anchore/syft) | SBOM generation, license detection | Anchore |
 | [grype](https://github.com/anchore/grype) | Vulnerability scanning | Anchore |
 | [osv-scanner](https://github.com/google/osv-scanner) | OSV advisory cross-reference | Google |
-| [opa](https://github.com/open-policy-agent/opa) | Policy evaluation engine | Styra / CNCF |
 
-Install all four with `./scripts/install-tools.sh` (system-wide) or
+Install all three with `./scripts/install-tools.sh` (system-wide) or
 `./scripts/install-user.sh` (per-user to `~/.local/bin`).
 
 ## Limitations

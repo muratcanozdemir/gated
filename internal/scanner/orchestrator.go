@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/internal/gate-daemon/internal/config"
@@ -44,33 +45,64 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 		ScannedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// 1. SBOM via syft — identifies contents and licenses.
-	sbom, err := runSyft(ctx, o.tools.Syft, pkg.Path)
-	if err != nil {
-		slog.Warn("syft failed", "path", pkg.Path, "err", err)
-		result.Errors = append(result.Errors, fmt.Sprintf("syft: %v", err))
-	} else {
+	// syft (SBOM/licenses), grype, and osv-scanner are independent
+	// subprocess invocations against the same artifact — run them
+	// concurrently so wall-clock cost is max(syft,grype,osv) instead of
+	// their sum. The calling process stays frozen in-kernel for this
+	// entire duration under fanotify, so this is the hottest path in the
+	// daemon.
+	var (
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		vulns    []Vulnerability
+		osvVulns []Vulnerability
+	)
+
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		sbom, err := runSyft(ctx, o.tools.Syft, pkg.Path)
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			slog.Warn("syft failed", "path", pkg.Path, "err", err)
+			result.Errors = append(result.Errors, fmt.Sprintf("syft: %v", err))
+			return
+		}
 		result.SBOM = sbom
 		result.Licenses = extractLicenses(sbom)
-	}
+	}()
 
-	// 2. Vulnerability scan via grype.
-	vulns, err := runGrype(ctx, o.tools.Grype, pkg.Path)
-	if err != nil {
-		slog.Warn("grype failed", "path", pkg.Path, "err", err)
-		result.Errors = append(result.Errors, fmt.Sprintf("grype: %v", err))
-	} else {
-		result.Vulnerabilities = append(result.Vulnerabilities, vulns...)
-	}
+	go func() {
+		defer wg.Done()
+		v, err := runGrype(ctx, o.tools.Grype, pkg.Path)
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			slog.Warn("grype failed", "path", pkg.Path, "err", err)
+			result.Errors = append(result.Errors, fmt.Sprintf("grype: %v", err))
+			return
+		}
+		vulns = v
+	}()
 
-	// 3. OSV scanner for advisory cross-reference.
-	osvVulns, err := runOSV(ctx, o.tools.OsvScanner, pkg)
-	if err != nil {
-		slog.Warn("osv-scanner failed", "path", pkg.Path, "err", err)
-		result.Errors = append(result.Errors, fmt.Sprintf("osv-scanner: %v", err))
-	} else {
-		result.Vulnerabilities = dedup(append(result.Vulnerabilities, osvVulns...))
-	}
+	go func() {
+		defer wg.Done()
+		v, err := runOSV(ctx, o.tools.OsvScanner, pkg)
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			slog.Warn("osv-scanner failed", "path", pkg.Path, "err", err)
+			result.Errors = append(result.Errors, fmt.Sprintf("osv-scanner: %v", err))
+			return
+		}
+		osvVulns = v
+	}()
+
+	wg.Wait()
+
+	result.Vulnerabilities = dedup(append(vulns, osvVulns...))
 
 	return result, nil
 }

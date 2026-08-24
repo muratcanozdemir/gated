@@ -29,7 +29,6 @@ type Tools struct {
 	Syft       string `yaml:"syft"`
 	Grype      string `yaml:"grype"`
 	OsvScanner string `yaml:"osv_scanner"`
-	Opa        string `yaml:"opa"`
 }
 
 func Load(path string) (*Config, error) {
@@ -48,7 +47,6 @@ func Load(path string) (*Config, error) {
 			Syft:       "syft",
 			Grype:      "grype",
 			OsvScanner: "osv-scanner",
-			Opa:        "opa",
 		},
 	}
 
@@ -62,6 +60,9 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.PolicyDir = expandPath(cfg.PolicyDir)
 	cfg.VerdictDir = expandPath(cfg.VerdictDir)
+	cfg.Tools.Syft = expandPath(cfg.Tools.Syft)
+	cfg.Tools.Grype = expandPath(cfg.Tools.Grype)
+	cfg.Tools.OsvScanner = expandPath(cfg.Tools.OsvScanner)
 
 	if len(cfg.WatchPaths) == 0 {
 		return nil, fmt.Errorf("no watch_paths configured")

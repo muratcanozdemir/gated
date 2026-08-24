@@ -46,7 +46,7 @@ func main() {
 	initLogging(cfg.LogLevel)
 
 	// Initialize policy engine.
-	policyEngine, err := policy.NewEngine(cfg.Tools.Opa, cfg.PolicyDir)
+	policyEngine, err := policy.NewEngine(cfg.PolicyDir)
 	if err != nil {
 		slog.Error("policy engine init failed", "err", err)
 		os.Exit(1)

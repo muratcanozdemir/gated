@@ -18,7 +18,6 @@ tools:
   syft: ~/.local/bin/syft
   grype: ~/.local/bin/grype
   osv_scanner: ~/.local/bin/osv-scanner
-  opa: ~/.local/bin/opa
 
 policy_dir: ~/.config/gated/policy
 verdict_dir: ~/.local/share/gated/verdicts

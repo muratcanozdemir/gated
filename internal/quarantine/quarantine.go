@@ -129,8 +129,11 @@ func (e *Engine) HandleNewArtifact(path, ecosystem string) {
 			}
 		}
 		// Fallback: just delete.
-		os.Remove(holdPath)
-		slog.Warn("DENIED — deleted", "path", path)
+		if err := os.Remove(holdPath); err != nil {
+			slog.Error("DENIED — failed to delete quarantined file, orphaned", "path", holdPath, "err", err)
+		} else {
+			slog.Warn("DENIED — deleted", "path", path)
+		}
 	}
 }
 
