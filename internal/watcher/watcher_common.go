@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/internal/gate-daemon/internal/config"
-	"github.com/internal/gate-daemon/internal/quarantine"
+	"github.com/muratcanozdemir/gated/internal/config"
+	"github.com/muratcanozdemir/gated/internal/quarantine"
 )
 
 // resolveEcosystem returns the ecosystem for the first configured watch

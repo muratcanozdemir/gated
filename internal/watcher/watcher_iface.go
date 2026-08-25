@@ -1,7 +1,7 @@
 package watcher
 
 import (
-	"github.com/internal/gate-daemon/internal/config"
+	"github.com/muratcanozdemir/gated/internal/config"
 )
 
 // DecisionFunc is called with the file path, ecosystem, and PID.

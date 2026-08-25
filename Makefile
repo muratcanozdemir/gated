@@ -16,7 +16,8 @@ LDFLAGS    := -s -w \
 GOFLAGS    := -trimpath -ldflags="$(LDFLAGS)"
 
 .PHONY: build test vet lint fmt install install-config install-tools validate \
-        clean build-all build-linux build-darwin build-windows check tidy
+        clean build-all build-linux build-darwin build-windows check tidy \
+        install-systemd install-systemd-unprivileged
 
 ## Build
 
@@ -75,6 +76,16 @@ install-systemd:
 	install -Dm644 init/systemd/gated.service /etc/systemd/system/gated.service
 	systemctl daemon-reload
 	@echo "Unit installed. Enable with: systemctl enable --now gated"
+
+# Unprivileged mode: creates the 'gated' system user/group the unit runs
+# as (init/systemd/gated-unprivileged.service assumes it exists but
+# nothing else in this repo creates it).
+install-systemd-unprivileged:
+	getent group gated >/dev/null || groupadd --system gated
+	getent passwd gated >/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin --gid gated gated
+	install -Dm644 init/systemd/gated-unprivileged.service /etc/systemd/system/gated.service
+	systemctl daemon-reload
+	@echo "Unit installed, running as 'gated' system user. Enable with: systemctl enable --now gated"
 
 install-tools:
 	./scripts/install-tools.sh

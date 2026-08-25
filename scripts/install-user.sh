@@ -41,8 +41,16 @@ else
     if [ -f "${PROJECT_DIR}/gated" ]; then
         cp "${PROJECT_DIR}/gated" "${INSTALL_DIR}/gated"
         chmod 755 "${INSTALL_DIR}/gated"
+    elif command -v make >/dev/null 2>&1 && command -v go >/dev/null 2>&1; then
+        # Use `make build` so version/commit/build-date are injected the
+        # same way as every other build path (avoids a binary that
+        # reports "dev (commit=unknown)" via -version).
+        echo "[build] Building from source (make build)..."
+        (cd "${PROJECT_DIR}" && make build)
+        cp "${PROJECT_DIR}/gated" "${INSTALL_DIR}/gated"
+        chmod 755 "${INSTALL_DIR}/gated"
     elif command -v go >/dev/null 2>&1; then
-        echo "[build] Building from source..."
+        echo "[build] make not found, building from source without version injection..."
         (cd "${PROJECT_DIR}" && go build -trimpath -ldflags="-s -w" -o "${INSTALL_DIR}/gated" ./cmd/gated)
     else
         echo "ERROR: No binary found and Go not installed. Build first with 'make build' or set ARTIFACTORY_URL."

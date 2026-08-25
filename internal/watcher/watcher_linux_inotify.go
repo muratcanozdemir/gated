@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/internal/gate-daemon/internal/config"
-	"github.com/internal/gate-daemon/internal/quarantine"
+	"github.com/muratcanozdemir/gated/internal/config"
+	"github.com/muratcanozdemir/gated/internal/quarantine"
 )
 
 // InotifyQuarantineWatcher uses inotify for file notifications and the

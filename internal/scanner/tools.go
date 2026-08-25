@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/internal/gate-daemon/internal/resolver"
+	"github.com/muratcanozdemir/gated/internal/resolver"
 )
 
 // Vulnerability is the common representation across tools.

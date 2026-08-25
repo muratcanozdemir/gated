@@ -68,6 +68,16 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("no watch_paths configured")
 	}
 
+	switch cfg.WatcherMode {
+	case "auto", "fanotify", "quarantine":
+	default:
+		return nil, fmt.Errorf("invalid watcher_mode %q (must be auto, fanotify, or quarantine)", cfg.WatcherMode)
+	}
+
+	if cfg.ScanTimeout <= 0 {
+		return nil, fmt.Errorf("scan_timeout_seconds must be positive, got %d", cfg.ScanTimeout)
+	}
+
 	return cfg, nil
 }
 

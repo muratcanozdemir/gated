@@ -1,4 +1,4 @@
-module github.com/internal/gate-daemon
+module github.com/muratcanozdemir/gated
 
 go 1.25.0
 

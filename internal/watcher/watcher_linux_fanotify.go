@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/internal/gate-daemon/internal/config"
+	"github.com/muratcanozdemir/gated/internal/config"
 )
 
 const (

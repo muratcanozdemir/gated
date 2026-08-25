@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/internal/gate-daemon/internal/config"
-	"github.com/internal/gate-daemon/internal/resolver"
+	"github.com/muratcanozdemir/gated/internal/config"
+	"github.com/muratcanozdemir/gated/internal/resolver"
 )
 
 // ScanResult aggregates all tool outputs for policy evaluation.

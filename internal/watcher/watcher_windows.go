@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"runtime"
 
-	"github.com/internal/gate-daemon/internal/quarantine"
+	"github.com/muratcanozdemir/gated/internal/quarantine"
 )
 
 // WindowsWatcher uses ReadDirectoryChangesW + quarantine-rename.

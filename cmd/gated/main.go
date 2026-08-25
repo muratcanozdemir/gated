@@ -10,12 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/internal/gate-daemon/internal/config"
-	"github.com/internal/gate-daemon/internal/policy"
-	"github.com/internal/gate-daemon/internal/resolver"
-	"github.com/internal/gate-daemon/internal/scanner"
-	"github.com/internal/gate-daemon/internal/verdict"
-	"github.com/internal/gate-daemon/internal/watcher"
+	"github.com/muratcanozdemir/gated/internal/config"
+	"github.com/muratcanozdemir/gated/internal/policy"
+	"github.com/muratcanozdemir/gated/internal/resolver"
+	"github.com/muratcanozdemir/gated/internal/scanner"
+	"github.com/muratcanozdemir/gated/internal/verdict"
+	"github.com/muratcanozdemir/gated/internal/watcher"
 )
 
 // Set by -ldflags at build time.

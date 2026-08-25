@@ -64,8 +64,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/internal/gate-daemon/internal/config"
-	"github.com/internal/gate-daemon/internal/quarantine"
+	"github.com/muratcanozdemir/gated/internal/config"
+	"github.com/muratcanozdemir/gated/internal/quarantine"
 )
 
 // globalDarwin holds the singleton state for the FSEvents callback.

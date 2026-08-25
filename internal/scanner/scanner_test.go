@@ -3,7 +3,7 @@ package scanner
 import (
 	"testing"
 
-	"github.com/internal/gate-daemon/internal/resolver"
+	"github.com/muratcanozdemir/gated/internal/resolver"
 )
 
 func TestDedupVulnerabilities(t *testing.T) {

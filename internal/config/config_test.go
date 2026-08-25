@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -73,5 +74,40 @@ tools:
 func TestLoadMissingFile(t *testing.T) {
 	if _, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml")); err == nil {
 		t.Fatal("expected error for missing config file")
+	}
+}
+
+func TestLoadRejectsInvalidWatcherMode(t *testing.T) {
+	path := writeConfig(t, `watch_paths:
+  - path: /tmp/cache
+    ecosystem: pypi
+watcher_mode: bogus
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for invalid watcher_mode")
+	}
+}
+
+func TestLoadAcceptsValidWatcherModes(t *testing.T) {
+	for _, mode := range []string{"auto", "fanotify", "quarantine"} {
+		path := writeConfig(t, `watch_paths:
+  - path: /tmp/cache
+    ecosystem: pypi
+watcher_mode: `+mode+"\n")
+		if _, err := Load(path); err != nil {
+			t.Errorf("watcher_mode=%q: unexpected error: %v", mode, err)
+		}
+	}
+}
+
+func TestLoadRejectsNonPositiveScanTimeout(t *testing.T) {
+	for _, timeout := range []int{0, -1} {
+		path := writeConfig(t, `watch_paths:
+  - path: /tmp/cache
+    ecosystem: pypi
+scan_timeout_seconds: `+strconv.Itoa(timeout)+"\n")
+		if _, err := Load(path); err == nil {
+			t.Errorf("scan_timeout_seconds=%d: expected error", timeout)
+		}
 	}
 }
