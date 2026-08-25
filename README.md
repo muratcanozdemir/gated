@@ -48,8 +48,8 @@ policies, same scans.
 ### Developer workstation (no root)
 
 ```bash
-git clone https://github.com/internal/gate-daemon.git
-cd gate-daemon
+git clone https://github.com/muratcanozdemir/gated.git
+cd gated
 
 # Install scan tools to ~/.local/bin.
 ./scripts/install-user.sh
@@ -194,11 +194,11 @@ SIGHUP re-validates policies and invalidates the verdict cache.
 
 Three unit files in `init/systemd/`:
 
-| Unit | Runs as | Mode | Use case |
-|------|---------|------|----------|
-| `gated.service` | root | fanotify | CI runners, shared machines |
-| `gated-unprivileged.service` | `gated` (service user) | quarantine | Server, no root desired |
-| `gated-user.service` | your UID | quarantine | Developer workstation |
+| Unit | Runs as | Mode | Use case | Install |
+|------|---------|------|----------|---------|
+| `gated.service` | root | fanotify | CI runners, shared machines | `sudo make install-systemd` |
+| `gated-unprivileged.service` | `gated` (service user) | quarantine | Server, no root desired | `sudo make install-systemd-unprivileged` (also creates the `gated` system user) |
+| `gated-user.service` | your UID | quarantine | Developer workstation | handled by `./scripts/install-user.sh` |
 
 ### Distribution via Artifactory
 
@@ -264,16 +264,17 @@ cache is invalidated on reload.
 
 ## Scan tools
 
-gated shells out to four tools. All are Apache-2.0 licensed:
+gated shells out to three tools, all Apache-2.0 licensed. Policy evaluation
+(OPA/Rego) runs in-process via the OPA Go SDK — no external `opa` binary
+required.
 
 | Tool | Purpose | Project |
 |------|---------|---------|
 | [syft](https://github.com/anchore/syft) | SBOM generation, license detection | Anchore |
 | [grype](https://github.com/anchore/grype) | Vulnerability scanning | Anchore |
 | [osv-scanner](https://github.com/google/osv-scanner) | OSV advisory cross-reference | Google |
-| [opa](https://github.com/open-policy-agent/opa) | Policy evaluation engine | Styra / CNCF |
 
-Install all four with `./scripts/install-tools.sh` (system-wide) or
+Install all three with `./scripts/install-tools.sh` (system-wide) or
 `./scripts/install-user.sh` (per-user to `~/.local/bin`).
 
 ## Limitations

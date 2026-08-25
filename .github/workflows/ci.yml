@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make fmt
+
+  vet:
+    name: go vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make vet
+
+  staticcheck:
+    name: staticcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+      - run: staticcheck ./...
+
+  test:
+    name: test (race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./... -race -count=1 -coverprofile=coverage.out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  validate:
+    name: validate config + policies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Policy compilation runs in-process via the OPA Go SDK — no opa
+      # binary needed here.
+      - run: make build
+      - run: ./gated -config configs/config.ci.yaml -validate
+
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runs-on: ubuntu-latest
+            cgo: "0"
+          - goos: linux
+            goarch: arm64
+            runs-on: ubuntu-latest
+            cgo: "0"
+          - goos: windows
+            goarch: amd64
+            runs-on: ubuntu-latest
+            cgo: "0"
+          - goos: darwin
+            goarch: amd64
+            runs-on: macos-latest
+            cgo: "1"
+          - goos: darwin
+            goarch: arm64
+            runs-on: macos-latest
+            cgo: "1"
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+        run: |
+          ext=""
+          [ "${{ matrix.goos }}" = "windows" ] && ext=".exe"
+          go build -trimpath -ldflags="-s -w" \
+            -o "gated-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" ./cmd/gated
+
+  ci:
+    name: CI
+    if: always()
+    needs: [fmt, vet, staticcheck, test, validate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all jobs to succeed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi

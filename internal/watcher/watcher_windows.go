@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"runtime"
 
-	"github.com/internal/gate-daemon/internal/quarantine"
+	"github.com/muratcanozdemir/gated/internal/quarantine"
 )
 
 // WindowsWatcher uses ReadDirectoryChangesW + quarantine-rename.
@@ -55,8 +55,8 @@ func New(wcfg Config) (Watcher, error) {
 	_ = quarantine.NewEngine(wcfg.DecisionFn, wcfg.WarnOnly)
 
 	return nil, fmt.Errorf(
-		"gated on Windows is not yet implemented; "+
-			"see watcher_windows.go for implementation strategy "+
+		"gated on Windows is not yet implemented; " +
+			"see watcher_windows.go for implementation strategy " +
 			"(ReadDirectoryChangesW + quarantine, minifilter, or ProjFS)",
 	)
 }

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	quarantineDir  = ".gated-quarantine"
+	quarantineDir    = ".gated-quarantine"
 	quarantineSuffix = ".gated-hold"
 )
 
@@ -41,10 +41,10 @@ func NewEngine(decisionFn func(string, string, int32) bool, warnOnly bool) *Engi
 // It quarantines the file, runs the decision function, then releases or deletes.
 //
 // This is the core cross-platform gating mechanism:
-//   1. Rename file to quarantine location (atomic, blocks package manager)
-//   2. Run scans against quarantined file
-//   3. On allow: rename back to original path
-//   4. On deny: delete quarantined file (or leave for audit)
+//  1. Rename file to quarantine location (atomic, blocks package manager)
+//  2. Run scans against quarantined file
+//  3. On allow: rename back to original path
+//  4. On deny: delete quarantined file (or leave for audit)
 //
 // The package manager sees the file disappear briefly (quarantine window),
 // then either reappear (allowed) or stay gone (denied). Most package managers
@@ -129,8 +129,11 @@ func (e *Engine) HandleNewArtifact(path, ecosystem string) {
 			}
 		}
 		// Fallback: just delete.
-		os.Remove(holdPath)
-		slog.Warn("DENIED — deleted", "path", path)
+		if err := os.Remove(holdPath); err != nil {
+			slog.Error("DENIED — failed to delete quarantined file, orphaned", "path", holdPath, "err", err)
+		} else {
+			slog.Warn("DENIED — deleted", "path", path)
+		}
 	}
 }
 

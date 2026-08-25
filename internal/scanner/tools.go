@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 
-	"github.com/internal/gate-daemon/internal/resolver"
+	"github.com/muratcanozdemir/gated/internal/resolver"
 )
 
 // Vulnerability is the common representation across tools.
@@ -18,7 +19,7 @@ type Vulnerability struct {
 	CVSS        float64 `json:"cvss"`
 	FixedIn     string  `json:"fixed_in,omitempty"`
 	Description string  `json:"description,omitempty"`
-	Source       string  `json:"source"` // "grype" or "osv"
+	Source      string  `json:"source"` // "grype" or "osv"
 }
 
 // --- syft ---
@@ -36,8 +37,8 @@ type SyftArtifact struct {
 }
 
 type SyftLicense struct {
-	Value  string `json:"value"`
-	Type   string `json:"spdxExpression"`
+	Value string `json:"value"`
+	Type  string `json:"spdxExpression"`
 }
 
 func runSyft(ctx context.Context, bin, path string) (*SyftOutput, error) {
@@ -47,7 +48,7 @@ func runSyft(ctx context.Context, bin, path string) (*SyftOutput, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s: %s", err, stderr.String())
+		return nil, fmt.Errorf("%w: %s", err, stderr.String())
 	}
 
 	var out SyftOutput
@@ -68,11 +69,11 @@ type grypeMatch struct {
 }
 
 type grypeVuln struct {
-	ID       string   `json:"id"`
-	Severity string   `json:"severity"`
-	Fix      grypeFix `json:"fix"`
-	Cvss     []grypeCVSS `json:"cvss"`
-	Description string `json:"description"`
+	ID          string      `json:"id"`
+	Severity    string      `json:"severity"`
+	Fix         grypeFix    `json:"fix"`
+	Cvss        []grypeCVSS `json:"cvss"`
+	Description string      `json:"description"`
 }
 
 type grypeFix struct {
@@ -93,11 +94,10 @@ func runGrype(ctx context.Context, bin, path string) ([]Vulnerability, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	// grype exits 0 unless --fail-on is set (it isn't here) or a real
+	// error occurred, so any non-zero exit is a genuine failure.
 	if err := cmd.Run(); err != nil {
-		// Grype exits non-zero when vulnerabilities found — that's expected.
-		if stderr.Len() > 0 && !strings.Contains(stderr.String(), "vulnerability") {
-			return nil, fmt.Errorf("%s: %s", err, stderr.String())
-		}
+		return nil, fmt.Errorf("%w: %s", err, stderr.String())
 	}
 
 	var out grypeOutput
@@ -169,9 +169,12 @@ func runOSV(ctx context.Context, bin string, pkg *resolver.Package) ([]Vulnerabi
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// osv-scanner exits non-zero when vulns found.
-		if stdout.Len() == 0 {
-			return nil, fmt.Errorf("%s: %s", err, stderr.String())
+		// osv-scanner documents exit code 1 as "vulnerabilities found",
+		// not a failure; anything else (including context deadlines) is
+		// a genuine error.
+		var exitErr *exec.ExitError
+		if !(errors.As(err, &exitErr) && exitErr.ExitCode() == 1) {
+			return nil, fmt.Errorf("%w: %s", err, stderr.String())
 		}
 	}
 

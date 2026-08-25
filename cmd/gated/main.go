@@ -5,17 +5,18 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime"
 	"syscall"
 	"time"
 
-	"github.com/internal/gate-daemon/internal/config"
-	"github.com/internal/gate-daemon/internal/policy"
-	"github.com/internal/gate-daemon/internal/resolver"
-	"github.com/internal/gate-daemon/internal/scanner"
-	"github.com/internal/gate-daemon/internal/verdict"
-	"github.com/internal/gate-daemon/internal/watcher"
+	"github.com/muratcanozdemir/gated/internal/config"
+	"github.com/muratcanozdemir/gated/internal/policy"
+	"github.com/muratcanozdemir/gated/internal/resolver"
+	"github.com/muratcanozdemir/gated/internal/scanner"
+	"github.com/muratcanozdemir/gated/internal/verdict"
+	"github.com/muratcanozdemir/gated/internal/watcher"
 )
 
 // Set by -ldflags at build time.
@@ -46,7 +47,7 @@ func main() {
 	initLogging(cfg.LogLevel)
 
 	// Initialize policy engine.
-	policyEngine, err := policy.NewEngine(cfg.Tools.Opa, cfg.PolicyDir)
+	policyEngine, err := policy.NewEngine(cfg.PolicyDir)
 	if err != nil {
 		slog.Error("policy engine init failed", "err", err)
 		os.Exit(1)
@@ -76,6 +77,7 @@ func main() {
 
 	// Initialize scanner.
 	scan := scanner.NewOrchestrator(cfg.Tools, cfg.ScanTimeout)
+	warnIfMissing(cfg.Tools)
 
 	// The decision function wired into the fanotify event loop.
 	decisionFn := func(path, ecosystem string, pid int32) bool {
@@ -255,4 +257,20 @@ func initLogging(level string) {
 
 	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})
 	slog.SetDefault(slog.New(handler))
+}
+
+// warnIfMissing logs (but does not fail on) scan tool binaries that can't
+// be found on startup. Scanner.Scan already fails open per-tool on a
+// missing binary, so this doesn't change behavior — it just surfaces the
+// problem immediately instead of on the first cache miss.
+func warnIfMissing(tools config.Tools) {
+	for name, bin := range map[string]string{
+		"syft":        tools.Syft,
+		"grype":       tools.Grype,
+		"osv-scanner": tools.OsvScanner,
+	} {
+		if _, err := exec.LookPath(bin); err != nil {
+			slog.Warn("scan tool not found, scans using it will fail open", "tool", name, "path", bin)
+		}
+	}
 }

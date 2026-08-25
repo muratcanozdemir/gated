@@ -8,7 +8,6 @@ set -euo pipefail
 SYFT_VERSION="${SYFT_VERSION:-1.20.0}"
 GRYPE_VERSION="${GRYPE_VERSION:-0.87.0}"
 OSV_SCANNER_VERSION="${OSV_SCANNER_VERSION:-1.9.1}"
-OPA_VERSION="${OPA_VERSION:-1.4.2}"
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
@@ -69,10 +68,8 @@ install_tool "osv-scanner ${OSV_SCANNER_VERSION}" \
     "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_${OSV_SCANNER_VERSION}_${OS}_${ARCH}.tar.gz" \
     "osv-scanner"
 
-# OPA — Open Policy Agent.
-install_tool "opa ${OPA_VERSION}" \
-    "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_${OS}_${ARCH}_static" \
-    "opa"
+# opa is no longer needed — policy compilation/evaluation runs in-process
+# via the OPA Go SDK (internal/policy).
 
 # Warm grype vulnerability database.
 echo "[init] Updating grype vulnerability database..."

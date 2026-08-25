@@ -41,8 +41,16 @@ else
     if [ -f "${PROJECT_DIR}/gated" ]; then
         cp "${PROJECT_DIR}/gated" "${INSTALL_DIR}/gated"
         chmod 755 "${INSTALL_DIR}/gated"
+    elif command -v make >/dev/null 2>&1 && command -v go >/dev/null 2>&1; then
+        # Use `make build` so version/commit/build-date are injected the
+        # same way as every other build path (avoids a binary that
+        # reports "dev (commit=unknown)" via -version).
+        echo "[build] Building from source (make build)..."
+        (cd "${PROJECT_DIR}" && make build)
+        cp "${PROJECT_DIR}/gated" "${INSTALL_DIR}/gated"
+        chmod 755 "${INSTALL_DIR}/gated"
     elif command -v go >/dev/null 2>&1; then
-        echo "[build] Building from source..."
+        echo "[build] make not found, building from source without version injection..."
         (cd "${PROJECT_DIR}" && go build -trimpath -ldflags="-s -w" -o "${INSTALL_DIR}/gated" ./cmd/gated)
     else
         echo "ERROR: No binary found and Go not installed. Build first with 'make build' or set ARTIFACTORY_URL."
@@ -83,7 +91,6 @@ install_tool_user() {
 SYFT_VERSION="${SYFT_VERSION:-1.20.0}"
 GRYPE_VERSION="${GRYPE_VERSION:-0.87.0}"
 OSV_SCANNER_VERSION="${OSV_SCANNER_VERSION:-1.9.1}"
-OPA_VERSION="${OPA_VERSION:-1.4.2}"
 
 install_tool_user "syft" \
     "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_${OS}_${ARCH}.tar.gz" \
@@ -97,9 +104,8 @@ install_tool_user "osv-scanner" \
     "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_${OSV_SCANNER_VERSION}_${OS}_${ARCH}.tar.gz" \
     "osv-scanner"
 
-install_tool_user "opa" \
-    "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_${OS}_${ARCH}_static" \
-    "opa"
+# opa is no longer needed — policy compilation/evaluation runs in-process
+# via the OPA Go SDK (internal/policy).
 
 # Warm grype DB.
 echo "[init] Updating grype vulnerability database..."

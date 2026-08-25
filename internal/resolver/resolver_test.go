@@ -38,8 +38,8 @@ func TestResolvePyPI(t *testing.T) {
 			},
 		},
 		{
-			name: "non-artifact",
-			path: "/home/user/.cache/uv/some-metadata.json",
+			name:    "non-artifact",
+			path:    "/home/user/.cache/uv/some-metadata.json",
 			wantPkg: nil,
 		},
 	}
@@ -94,8 +94,8 @@ func TestResolveGo(t *testing.T) {
 			},
 		},
 		{
-			name: "info file skipped",
-			path: "/home/user/go/pkg/mod/cache/download/golang.org/x/sys/@v/v0.29.0.info",
+			name:    "info file skipped",
+			path:    "/home/user/go/pkg/mod/cache/download/golang.org/x/sys/@v/v0.29.0.info",
 			wantPkg: nil,
 		},
 	}

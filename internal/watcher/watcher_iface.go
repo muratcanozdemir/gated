@@ -1,7 +1,7 @@
 package watcher
 
 import (
-	"github.com/internal/gate-daemon/internal/config"
+	"github.com/muratcanozdemir/gated/internal/config"
 )
 
 // DecisionFunc is called with the file path, ecosystem, and PID.
@@ -33,8 +33,8 @@ type Watcher interface {
 
 // Config bundles the common parameters all platform watchers need.
 type Config struct {
-	Paths        []config.WatchPath
-	DecisionFn   DecisionFunc
-	WarnOnly     bool
-	WatcherMode  Mode
+	Paths       []config.WatchPath
+	DecisionFn  DecisionFunc
+	WarnOnly    bool
+	WatcherMode Mode
 }

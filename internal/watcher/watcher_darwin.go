@@ -60,13 +60,12 @@ import "C"
 import (
 	"fmt"
 	"log/slog"
-	"path/filepath"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
-	"github.com/internal/gate-daemon/internal/config"
-	"github.com/internal/gate-daemon/internal/quarantine"
+	"github.com/muratcanozdemir/gated/internal/config"
+	"github.com/muratcanozdemir/gated/internal/quarantine"
 )
 
 // globalDarwin holds the singleton state for the FSEvents callback.
@@ -83,6 +82,7 @@ type DarwinWatcher struct {
 	decisionFn DecisionFunc
 	warnOnly   bool
 	done       chan struct{}
+	closed     atomic.Bool
 }
 
 func New(wcfg Config) (Watcher, error) {
@@ -99,6 +99,8 @@ func New(wcfg Config) (Watcher, error) {
 	globalDarwin.mu.Lock()
 	globalDarwin.watcher = w
 	globalDarwin.mu.Unlock()
+
+	startSeenPruner(w.done, qEngine)
 
 	return w, nil
 }
@@ -156,20 +158,13 @@ func (w *DarwinWatcher) Run() error {
 }
 
 func (w *DarwinWatcher) Close() error {
-	close(w.done)
+	if w.closed.CompareAndSwap(false, true) {
+		close(w.done)
+	}
 	return nil
 }
 
 func (w *DarwinWatcher) Mode() string { return "fsevents+quarantine" }
-
-func (w *DarwinWatcher) resolveEcosystem(path string) string {
-	for _, wp := range w.paths {
-		if strings.HasPrefix(path, wp.Path) {
-			return wp.Ecosystem
-		}
-	}
-	return ""
-}
 
 // handleFSEvent processes a single file event from FSEvents.
 func (w *DarwinWatcher) handleFSEvent(path string, flags uint32) {
@@ -200,7 +195,7 @@ func (w *DarwinWatcher) handleFSEvent(path string, flags uint32) {
 		return
 	}
 
-	ecosystem := w.resolveEcosystem(path)
+	ecosystem := resolveEcosystem(w.paths, path)
 	if ecosystem == "" {
 		return
 	}
@@ -214,42 +209,6 @@ func (w *DarwinWatcher) handleFSEvent(path string, flags uint32) {
 
 	// Quarantine in a goroutine so the callback returns fast.
 	go w.qEngine.HandleNewArtifact(path, ecosystem)
-}
-
-// isArtifactFile returns true for file extensions we should gate.
-func isArtifactFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".whl", ".tar", ".gz", ".zip", ".jar", ".crate", ".tgz", ".egg":
-		return true
-	}
-	// Handle .tar.gz (double extension).
-	if strings.HasSuffix(strings.ToLower(path), ".tar.gz") {
-		return true
-	}
-	return false
-}
-
-// isMetadataFile filters out non-artifact files.
-func isMetadataFile(path string) bool {
-	base := filepath.Base(path)
-	lower := strings.ToLower(base)
-
-	switch {
-	case lower == "go.sum", lower == "go.mod":
-		return true
-	case lower == "package-lock.json", lower == "yarn.lock":
-		return true
-	case lower == "cargo.lock", lower == "cargo.toml":
-		return true
-	case lower == "requirements.txt", lower == "pyproject.toml":
-		return true
-	case strings.HasSuffix(lower, ".pom"), strings.HasSuffix(lower, ".xml"):
-		return true
-	case strings.HasPrefix(lower, "."):
-		return true
-	}
-	return false
 }
 
 //export goFSEventCallback

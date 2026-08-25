@@ -1,0 +1,20 @@
+# CI-only config: validates config parsing + policy compilation against the
+# repo's own policy/ directory, without requiring /etc/gated or root.
+# Not intended for actual daemon use — see config.example.yaml / config.user.yaml.
+
+watch_paths:
+  - path: ~/.cache/uv
+    ecosystem: pypi
+
+tools:
+  syft: syft
+  grype: grype
+  osv_scanner: osv-scanner
+
+policy_dir: ./policy
+verdict_dir: ./.ci-verdicts
+
+warn_only: true
+watcher_mode: quarantine
+scan_timeout_seconds: 30
+log_level: info

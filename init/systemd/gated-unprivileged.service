@@ -1,6 +1,6 @@
 [Unit]
 Description=Gate Daemon — unprivileged inotify+quarantine mode
-Documentation=https://github.com/internal/gate-daemon
+Documentation=https://github.com/muratcanozdemir/gated
 After=network.target
 
 [Service]

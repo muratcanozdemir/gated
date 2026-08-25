@@ -27,7 +27,7 @@ type Entry struct {
 type Cache struct {
 	dir     string
 	mu      sync.RWMutex
-	entries map[string]*Entry     // keyed by file content hash
+	entries map[string]*Entry        // keyed by hash of the file path (not contents — see hashPath)
 	pending map[string]chan struct{} // signals when a scan completes
 }
 
@@ -122,7 +122,9 @@ func (c *Cache) Invalidate(filePath string) {
 	delete(c.entries, hash)
 	c.mu.Unlock()
 
-	os.Remove(filepath.Join(c.dir, hash+".json"))
+	if err := os.Remove(filepath.Join(c.dir, hash+".json")); err != nil && !os.IsNotExist(err) {
+		slog.Warn("invalidate: failed to remove verdict file", "hash", hash, "err", err)
+	}
 }
 
 // InvalidateAll clears the entire cache. Use on policy reload.
@@ -133,7 +135,9 @@ func (c *Cache) InvalidateAll() {
 
 	entries, _ := os.ReadDir(c.dir)
 	for _, e := range entries {
-		os.Remove(filepath.Join(c.dir, e.Name()))
+		if err := os.Remove(filepath.Join(c.dir, e.Name())); err != nil {
+			slog.Warn("invalidate all: failed to remove verdict file", "name", e.Name(), "err", err)
+		}
 	}
 	slog.Info("verdict cache invalidated")
 }
@@ -196,26 +200,51 @@ func (c *Cache) loadFromDisk() error {
 	return nil
 }
 
+// hashPath keys verdicts by file path, not artifact bytes: if a different
+// artifact is later written to the same path, the stale verdict is served
+// without a rescan. Acceptable for package manager caches, which are
+// immutable per version, but worth knowing if this cache is reused
+// elsewhere.
 func hashPath(path string) string {
 	h := sha256.Sum256([]byte(path))
 	return fmt.Sprintf("%x", h[:16]) // 32 hex chars, enough for dedup
 }
 
 // PruneOlderThan removes verdicts older than the given duration.
+//
+// Expired hashes are collected under a read lock, deleted from the map
+// under a brief write lock, then removed from disk with no lock held at
+// all — a full-cache walk plus synchronous file deletion must not block
+// concurrent Lookup/Store/MarkPending calls, which sit in the install
+// critical path.
 func (c *Cache) PruneOlderThan(maxAge time.Duration) int {
 	cutoff := time.Now().Add(-maxAge)
-	pruned := 0
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	c.mu.RLock()
+	var expired []string
 	for hash, entry := range c.entries {
 		t, err := time.Parse(time.RFC3339, entry.ScannedAt)
 		if err != nil || t.Before(cutoff) {
-			delete(c.entries, hash)
-			os.Remove(filepath.Join(c.dir, hash+".json"))
-			pruned++
+			expired = append(expired, hash)
 		}
 	}
-	return pruned
+	c.mu.RUnlock()
+
+	if len(expired) == 0 {
+		return 0
+	}
+
+	c.mu.Lock()
+	for _, hash := range expired {
+		delete(c.entries, hash)
+	}
+	c.mu.Unlock()
+
+	for _, hash := range expired {
+		if err := os.Remove(filepath.Join(c.dir, hash+".json")); err != nil && !os.IsNotExist(err) {
+			slog.Warn("prune: failed to remove verdict file", "hash", hash, "err", err)
+		}
+	}
+
+	return len(expired)
 }

@@ -5,7 +5,7 @@
 
 [Unit]
 Description=Gate Daemon — developer workstation (quarantine mode)
-Documentation=https://github.com/internal/gate-daemon
+Documentation=https://github.com/muratcanozdemir/gated
 
 [Service]
 Type=simple
