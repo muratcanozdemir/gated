@@ -1,0 +1,13 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: gated
+  description: Supply-chain security gate daemon that intercepts OS-level package manager installs, scans artifacts with syft/grype/osv-scanner, and evaluates OPA/Rego policies before allowing them through.
+  tags: [go, security, supply-chain, opa]
+  annotations:
+    github.com/project-slug: muratcanozdemir/gated
+    backstage.io/techdocs-ref: dir:.
+spec:
+  type: service
+  owner: user:default/muratcanozdemir
+  lifecycle: experimental
