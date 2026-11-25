@@ -81,6 +81,8 @@ sudo journalctl -u gated -f
 make build             # native platform
 make build-all         # linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
 make test              # unit tests with race detector
+make lint              # golangci-lint, incl. modernize (the go fix analyzers)
+make fix               # apply go fix
 make check             # build + validate policies + vet + policy tests
 make policy-test       # opa fmt/check/test on policy/ (same OPA version the daemon embeds)
 make snapshot          # GoReleaser dry run into dist/ (this host's OS family)
