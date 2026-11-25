@@ -17,7 +17,6 @@ watch_paths:
 tools:
   syft: ~/.local/bin/syft
   grype: ~/.local/bin/grype
-  osv_scanner: ~/.local/bin/osv-scanner
 
 policy_dir: ~/.config/gated/policy
 verdict_dir: ~/.local/share/gated/verdicts

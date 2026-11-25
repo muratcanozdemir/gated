@@ -28,7 +28,6 @@ watch_paths:
 tools:
   syft: syft
   grype: grype
-  osv_scanner: osv-scanner
 
 policy_dir: /etc/gated/policy
 verdict_dir: /var/lib/gated/verdicts

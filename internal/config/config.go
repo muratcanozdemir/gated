@@ -26,8 +26,11 @@ type WatchPath struct {
 }
 
 type Tools struct {
-	Syft       string `yaml:"syft"`
-	Grype      string `yaml:"grype"`
+	Syft  string `yaml:"syft"`
+	Grype string `yaml:"grype"`
+	// No longer used: osv-scanner was dropped (grype's DB covers the same
+	// advisories, and grype looks packages up by package URL). Still parsed
+	// so that existing configs load; the daemon warns when it is set.
 	OsvScanner string `yaml:"osv_scanner"`
 }
 
@@ -44,9 +47,8 @@ func Load(path string) (*Config, error) {
 		VerdictDir:  "/var/lib/gated/verdicts",
 		PolicyDir:   "/etc/gated/policy",
 		Tools: Tools{
-			Syft:       "syft",
-			Grype:      "grype",
-			OsvScanner: "osv-scanner",
+			Syft:  "syft",
+			Grype: "grype",
 		},
 	}
 
@@ -62,7 +64,6 @@ func Load(path string) (*Config, error) {
 	cfg.VerdictDir = expandPath(cfg.VerdictDir)
 	cfg.Tools.Syft = expandPath(cfg.Tools.Syft)
 	cfg.Tools.Grype = expandPath(cfg.Tools.Grype)
-	cfg.Tools.OsvScanner = expandPath(cfg.Tools.OsvScanner)
 
 	if len(cfg.WatchPaths) == 0 {
 		return nil, fmt.Errorf("no watch_paths configured")
