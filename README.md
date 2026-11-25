@@ -84,6 +84,12 @@ gated may inspect: your own (user service) or anyone's (as root). Elsewhere the
 lost race appears in gated's log only. In `warn_only` mode the same message says
 the package *would be* denied.
 
+Holding a process's stderr has a cost when it is a pipe (`uv pip install … | tee`,
+`$(go …)`, an IDE running go): the reader gets no end-of-file while gated holds the
+pipe. So gated holds it only while the process is running, for half a second after
+it was last seen, or while a verdict from that cache is pending. In practice a
+piped install ends at most as late as its slowest pending scan.
+
 ## Quick start
 
 ### Developer workstation (no root)

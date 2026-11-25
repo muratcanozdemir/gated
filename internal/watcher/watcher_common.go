@@ -86,16 +86,24 @@ func isArtifactFile(path string) bool {
 // to the verdict cache's 24h — "seen" only needs to survive duplicate
 // notifications for the same path shortly after processing, not long-term
 // caching (the verdict cache handles that).
+//
+// It also releases, four times a second, the output streams of package managers
+// that have exited (quarantine.Engine.ReapInstallers): a pipe gated holds
+// open keeps whatever reads it waiting.
 func startSeenPruner(done <-chan struct{}, qEngine *quarantine.Engine) {
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
+		reap := time.NewTicker(250 * time.Millisecond)
+		defer reap.Stop()
 		for {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
 				qEngine.PruneSeen(30 * time.Minute)
+			case <-reap.C:
+				qEngine.ReapInstallers()
 			}
 		}
 	}()

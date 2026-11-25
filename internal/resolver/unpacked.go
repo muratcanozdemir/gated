@@ -50,14 +50,19 @@ func CacheRoot(path, ecosystem string) string {
 			return filepath.FromSlash(root)
 		}
 	case "pypi":
-		// The uv cache is the directory holding archive-v0; events come from
-		// archive-v0 itself, its packages, or the cache's own top level.
+		// The uv cache holds archive-v0 and, from the moment uv sets it up,
+		// a CACHEDIR.TAG: on the first install into a new cache, archive-v0
+		// appears only when the first package is already unpacked, too late
+		// to find a fast uv still running. Events come from archive-v0, its
+		// packages, or the cache's own top level.
 		for dir, i := filepath.Dir(path), 0; i < 3; dir, i = filepath.Dir(dir), i+1 {
 			if filepath.Base(dir) == "archive-v0" {
 				return filepath.Dir(dir)
 			}
-			if fi, err := os.Stat(filepath.Join(dir, "archive-v0")); err == nil && fi.IsDir() {
-				return dir
+			for _, marker := range []string{"archive-v0", "CACHEDIR.TAG"} {
+				if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+					return dir
+				}
 			}
 		}
 	}

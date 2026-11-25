@@ -15,7 +15,7 @@ func TestInstallersOfSkipsEarlierRuns(t *testing.T) {
 	now := time.Now()
 	e.installers.caches = map[string]*cacheActivity{"/cache": {procs: map[int]*seenProcess{
 		// PIDs that run nothing: both have exited.
-		1 << 30:   {Process: &installer.Process{PID: 1 << 30, Comm: "uv"}, seen: now.Add(-500 * time.Millisecond)},
+		1 << 30:   {Process: &installer.Process{PID: 1 << 30, Comm: "uv"}, seen: now.Add(-100 * time.Millisecond)},
 		1<<30 + 1: {Process: &installer.Process{PID: 1<<30 + 1, Comm: "uv"}, seen: now.Add(-30 * time.Second)},
 		1<<30 + 2: {Process: &installer.Process{PID: 1<<30 + 2, Comm: "uv"}, seen: now.Add(-time.Hour)},
 	}}}

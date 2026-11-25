@@ -200,6 +200,7 @@ func (e *Engine) HandleInPlace(ip *resolver.InPlace, ecosystem string) {
 	// Who is installing it: found now, or already when it started working
 	// in the cache (NoteActivity); by the time the verdict is in, it may be done.
 	e.NoteActivity(ip.Root)
+	defer e.claim(ip.Root)()
 	procs := e.installersOf(ip.Root)
 
 	slog.Info("gating in place", "path", path, "ecosystem", ecosystem, "installers", describe(procs))
@@ -269,10 +270,31 @@ func describe(procs []*installer.Process) []string {
 	return out
 }
 
+// removeRetries and removeRetryDelay bound how long a deny keeps trying to
+// remove what the package manager is still writing: with a cached verdict,
+// the deny comes while go is unpacking the module, and a directory being
+// filled cannot be removed ("directory not empty").
+var (
+	removeRetries    = 20
+	removeRetryDelay = 250 * time.Millisecond
+)
+
 // removeAll deletes path, making directories writable first: go leaves the
 // module cache read-only, and a directory's entries cannot be removed
-// without write permission on it.
+// without write permission on it. It retries while the package manager is
+// still writing there.
 func removeAll(path string) error {
+	var err error
+	for range removeRetries {
+		if err = removeOnce(path); err == nil {
+			return nil
+		}
+		time.Sleep(removeRetryDelay)
+	}
+	return err
+}
+
+func removeOnce(path string) error {
 	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
 		if err == nil && d.IsDir() {
 			_ = os.Chmod(p, 0o700) //nolint:gosec // G302: a directory about to be deleted, owner only
