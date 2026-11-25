@@ -13,6 +13,7 @@ import (
 
 	"github.com/muratcanozdemir/gated/internal/config"
 	"github.com/muratcanozdemir/gated/internal/policy"
+	"github.com/muratcanozdemir/gated/internal/quarantine"
 	"github.com/muratcanozdemir/gated/internal/resolver"
 	"github.com/muratcanozdemir/gated/internal/scanner"
 	"github.com/muratcanozdemir/gated/internal/verdict"
@@ -97,10 +98,18 @@ func main() {
 			return true
 		}
 
-		// Resolve path to package identity.
-		pkg := resolver.Resolve(path, ecosystem)
+		// Resolve path to package identity. In quarantine mode path is the
+		// hold path: identify the package by where it was going, scan the
+		// bytes where they are.
+		idPath := path
+		if orig, ok := quarantine.OriginalPath(path); ok {
+			idPath = orig
+		}
+		pkg := resolver.Resolve(idPath, ecosystem)
 		if pkg == nil {
-			slog.Debug("unresolvable path, allowing", "path", path)
+			// Watchers only hand over artifact files, so this is unusual:
+			// make it visible rather than allowing silently.
+			slog.Warn("unresolvable artifact, allowing", "path", idPath, "ecosystem", ecosystem)
 			entry := &verdict.Entry{
 				Ecosystem: ecosystem,
 				Name:      "unresolved",
@@ -112,6 +121,7 @@ func main() {
 			return true
 		}
 
+		pkg.Path = path
 		slog.Info("scanning", "ecosystem", pkg.Ecosystem, "name", pkg.Name, "version", pkg.Version)
 
 		// Run all scans.
