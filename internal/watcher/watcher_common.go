@@ -7,6 +7,7 @@ import (
 
 	"github.com/muratcanozdemir/gated/internal/config"
 	"github.com/muratcanozdemir/gated/internal/quarantine"
+	"github.com/muratcanozdemir/gated/internal/resolver"
 )
 
 // resolveEcosystem returns the ecosystem for the first configured watch
@@ -40,6 +41,32 @@ func isMetadataFile(path string) bool {
 		return true
 	}
 	return false
+}
+
+// dispatch hands an artifact to the quarantine engine: in place for those a
+// package manager uses the moment they land (resolver.InPlace), held
+// otherwise. It runs async so the event loop isn't blocked. Returns false if
+// path is not an artifact to gate.
+func dispatch(q *quarantine.Engine, path, ecosystem string) bool {
+	if quarantine.IsQuarantinePath(path) || resolver.IsUnpackedContent(path, ecosystem) {
+		return false
+	}
+	if ip := resolver.ResolveInPlace(path, ecosystem); ip != nil {
+		go q.HandleInPlace(ip, ecosystem)
+		return true
+	}
+	if isMetadataFile(path) || !isArtifactFile(path) {
+		return false
+	}
+	go q.HandleNewArtifact(path, ecosystem)
+	return true
+}
+
+// newEngine builds the quarantine engine for a watcher.
+func newEngine(wcfg Config) *quarantine.Engine {
+	q := quarantine.NewEngine(wcfg.DecisionFn, wcfg.WarnOnly)
+	q.Explain = wcfg.Explain
+	return q
 }
 
 // isArtifactFile returns true for file extensions we should gate.

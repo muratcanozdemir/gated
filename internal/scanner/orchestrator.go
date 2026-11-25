@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -49,6 +50,7 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 	// What the scanners read: the artifact itself (jars), or its unpacked
 	// contents for archives syft cannot read as a file (wheels, sdists, npm
 	// tarballs, crates). If unpacking fails, scan the file and say why.
+	// A package a package manager unpacked itself (uv) is a directory.
 	target := pkg.Path
 	dir, cleanup, err := unpack(pkg.Path)
 	defer cleanup()
@@ -58,6 +60,13 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 		result.Errors = append(result.Errors, err.Error())
 	case dir != "":
 		target = "dir:" + dir
+	case isDir(pkg.Path):
+		dir, target = pkg.Path, "dir:"+pkg.Path
+	}
+	if pkg.Ecosystem == "npm" && dir != "" {
+		if name, ok := npmScopedName(dir, pkg.Name, pkg.Version); ok {
+			pkg.Name = name
+		}
 	}
 
 	// Three independent subprocess runs, concurrently, so the wall-clock
@@ -117,8 +126,13 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 	wg.Wait()
 
 	result.Vulnerabilities = dedup(append(vulns, byID...))
-	if len(result.Licenses) == 0 && pkg.Ecosystem == "pypi" && dir != "" {
-		result.Licenses = pythonMetadataLicenses(dir)
+	if len(result.Licenses) == 0 && dir != "" {
+		switch pkg.Ecosystem {
+		case "pypi":
+			result.Licenses = pythonMetadataLicenses(dir)
+		case "cargo":
+			result.Licenses = cargoLicenses(dir)
+		}
 	}
 
 	return result, nil
@@ -129,8 +143,14 @@ func (r *ScanResult) InputJSON() ([]byte, error) {
 	return json.Marshal(r)
 }
 
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
 // extractLicenses lists the distinct licenses syft found, as SPDX where syft
-// could tell (a Maven license URL becomes "Apache-2.0"), else as written.
+// could tell (a Maven license URL becomes "Apache-2.0"), else as written,
+// cleaned up by normalizeLicense.
 func extractLicenses(sbom *SyftOutput) []string {
 	if sbom == nil {
 		return nil
@@ -143,6 +163,7 @@ func extractLicenses(sbom *SyftOutput) []string {
 			if id == "" {
 				id = l.Value
 			}
+			id = normalizeLicense(id)
 			if id != "" && !seen[id] {
 				seen[id] = true
 				out = append(out, id)
