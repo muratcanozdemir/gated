@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 
@@ -40,7 +41,8 @@ type InotifyQuarantineWatcher struct {
 	mu      sync.RWMutex
 	watches map[int]watchEntry
 
-	done chan struct{}
+	done    chan struct{}
+	running atomic.Bool // Run owns the inotify fd and closes it on return
 }
 
 type watchEntry struct {
@@ -146,6 +148,10 @@ func (w *InotifyQuarantineWatcher) addWatch(dir, ecosystem string) error {
 }
 
 func (w *InotifyQuarantineWatcher) Run() error {
+	w.running.Store(true)
+	// Close only signals; the fd is closed here, once the loop is no longer
+	// reading it (closing it under a read raised "bad file descriptor").
+	defer unix.Close(w.fd)
 	// Use epoll to multiplex inotify fd with the done channel.
 	// Since done is a Go channel and not an fd, we use a pipe as
 	// the cancellation signal.
@@ -355,7 +361,10 @@ func (w *InotifyQuarantineWatcher) Close() error {
 	}
 	w.mu.RUnlock()
 
-	return unix.Close(w.fd)
+	if !w.running.Load() {
+		return unix.Close(w.fd) // Run never started: nobody else will
+	}
+	return nil
 }
 
 // --- helpers ---
