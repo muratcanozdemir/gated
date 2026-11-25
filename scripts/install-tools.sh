@@ -6,7 +6,7 @@ set -euo pipefail
 # Override versions via environment variables.
 
 SYFT_VERSION="${SYFT_VERSION:-1.20.0}"
-GRYPE_VERSION="${GRYPE_VERSION:-0.87.0}"
+GRYPE_VERSION="${GRYPE_VERSION:-0.122.1}"
 OSV_SCANNER_VERSION="${OSV_SCANNER_VERSION:-1.9.1}"
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
