@@ -281,15 +281,24 @@ func (w *InotifyQuarantineWatcher) handleInotifyEvent(wd int, mask uint32, name 
 
 	fullPath := filepath.Join(entry.dir, name)
 
-	// New subdirectory: add a watch for it dynamically.
-	if mask&unix.IN_CREATE != 0 && mask&unix.IN_ISDIR != 0 {
-		if quarantine.IsQuarantinePath(fullPath) {
+	// New directory, created here or moved in: watch it and everything
+	// below it. inotify watches are not recursive, and a package manager
+	// creates nested directories in one go (mkdir -p) and writes into the
+	// deepest one before this event is even read, so by now the subtree may
+	// hold directories and finished artifacts that no watch saw. Watch the
+	// whole subtree first, then gate what is already there; anything that
+	// lands afterwards raises its own event. A file reported both ways is
+	// gated once (the quarantine engine drops duplicates).
+	if mask&unix.IN_ISDIR != 0 {
+		if mask&(unix.IN_CREATE|unix.IN_MOVED_TO) == 0 || quarantine.IsQuarantinePath(fullPath) {
 			return
 		}
-		slog.Debug("new directory, adding watch", "path", fullPath, "ecosystem", entry.ecosystem)
-		if err := w.addWatch(fullPath, entry.ecosystem); err != nil {
-			slog.Debug("failed to add watch for new dir", "path", fullPath, "err", err)
+		n, err := w.addWatchRecursive(fullPath, entry.ecosystem)
+		if err != nil {
+			slog.Warn("watching new directory failed", "path", fullPath, "err", err)
 		}
+		slog.Debug("new directory watched", "path", fullPath, "ecosystem", entry.ecosystem, "watches", n)
+		w.gateExisting(fullPath, entry.ecosystem)
 		return
 	}
 
@@ -297,26 +306,36 @@ func (w *InotifyQuarantineWatcher) handleInotifyEvent(wd int, mask uint32, name 
 	if mask&(unix.IN_CLOSE_WRITE|unix.IN_MOVED_TO) == 0 {
 		return
 	}
+	w.gate(fullPath, entry.ecosystem, maskStr(mask))
+}
 
-	// Skip directories, metadata, quarantine artifacts, non-artifact files.
-	if mask&unix.IN_ISDIR != 0 {
+// gate hands an artifact to the quarantine engine (rename, scan, release or
+// deny), skipping quarantine files, metadata and non-artifacts. It runs async
+// so the inotify event loop isn't blocked.
+func (w *InotifyQuarantineWatcher) gate(path, ecosystem, event string) {
+	if quarantine.IsQuarantinePath(path) || isMetadataFile(path) || !isArtifactFile(path) {
 		return
 	}
-	if quarantine.IsQuarantinePath(fullPath) {
-		return
-	}
-	if isMetadataFile(fullPath) {
-		return
-	}
-	if !isArtifactFile(fullPath) {
-		return
-	}
+	slog.Info("detected", "path", path, "ecosystem", ecosystem, "event", event)
+	go w.qEngine.HandleNewArtifact(path, ecosystem)
+}
 
-	slog.Info("detected", "path", fullPath, "ecosystem", entry.ecosystem, "event", maskStr(mask))
-
-	// Hand off to quarantine engine — rename, scan, release/deny.
-	// Run async so the inotify event loop isn't blocked.
-	go w.qEngine.HandleNewArtifact(fullPath, entry.ecosystem)
+// gateExisting gates the artifacts already in a directory tree that appeared
+// before it was watched. Package managers write under a temporary name and
+// rename into place, and temporary names are not artifacts (isArtifactFile),
+// so what is found here is finished.
+func (w *InotifyQuarantineWatcher) gateExisting(root, ecosystem string) {
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return nil // vanished or unreadable: nothing to gate
+		case d.IsDir() && quarantine.IsQuarantinePath(path):
+			return filepath.SkipDir
+		case d.Type().IsRegular():
+			w.gate(path, ecosystem, "existing")
+		}
+		return nil
+	})
 }
 
 func (w *InotifyQuarantineWatcher) Close() error {
