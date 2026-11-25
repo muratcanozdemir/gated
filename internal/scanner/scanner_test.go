@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/muratcanozdemir/gated/internal/resolver"
@@ -85,5 +86,87 @@ func TestNormalizeSeverity(t *testing.T) {
 		if got := normalizeSeverity(tt.score); got != tt.want {
 			t.Errorf("normalizeSeverity(%q) = %q, want %q", tt.score, got, tt.want)
 		}
+	}
+}
+
+// Shaped like grype >= 0.88 JSON (grype/presenter/models): KEV and EPSS on
+// the vulnerability, and on related vulnerabilities (the CVE behind a GHSA).
+const grypeReport = `{"matches": [
+  {
+    "vulnerability": {
+      "id": "GHSA-jfh8-c2jp-5v3q", "severity": "Critical", "description": "Log4Shell",
+      "fix": {"versions": ["2.15.0"], "state": "fixed"},
+      "cvss": [{"metrics": {"baseScore": 10.0}}]
+    },
+    "relatedVulnerabilities": [
+      {
+        "id": "CVE-2021-44228",
+        "knownExploited": [{"cve": "CVE-2021-44228", "knownRansomwareCampaignUse": "Known"}],
+        "epss": [{"cve": "CVE-2021-44228", "epss": 0.94358, "percentile": 0.99}]
+      }
+    ]
+  },
+  {
+    "vulnerability": {
+      "id": "CVE-2023-0001", "severity": "High",
+      "fix": {"versions": [], "state": "not-fixed"},
+      "cvss": [],
+      "knownExploited": [{"cve": "CVE-2023-0001", "knownRansomwareCampaignUse": "Unknown"}],
+      "epss": [{"cve": "CVE-2023-0001", "epss": 0.12}]
+    },
+    "relatedVulnerabilities": [{"id": "CVE-2023-0001"}]
+  },
+  {
+    "vulnerability": {"id": "CVE-2024-0002", "severity": "Low", "fix": {"versions": []}, "cvss": []},
+    "relatedVulnerabilities": null
+  }
+]}`
+
+func TestParseGrype_ExploitData(t *testing.T) {
+	got, err := parseGrype([]byte(grypeReport))
+	if err != nil {
+		t.Fatalf("parseGrype: %v", err)
+	}
+	want := []Vulnerability{
+		{ID: "GHSA-jfh8-c2jp-5v3q", Severity: "critical", CVSS: 10, FixedIn: "2.15.0", Description: "Log4Shell", Source: "grype",
+			Aliases: []string{"CVE-2021-44228"}, KnownExploited: true, Ransomware: true, EPSS: 0.94358},
+		{ID: "CVE-2023-0001", Severity: "high", Source: "grype", KnownExploited: true, EPSS: 0.12},
+		{ID: "CVE-2024-0002", Severity: "low", Source: "grype"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseGrype:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// grype before 0.88 has no knownExploited/epss fields: parsing still works,
+// nothing is flagged.
+func TestParseGrype_OldReport(t *testing.T) {
+	got, err := parseGrype([]byte(`{"matches":[{"vulnerability":{"id":"CVE-1","severity":"Medium","fix":{"versions":[]},"cvss":[]}}]}`))
+	if err != nil {
+		t.Fatalf("parseGrype: %v", err)
+	}
+	if len(got) != 1 || got[0].KnownExploited || got[0].EPSS != 0 || got[0].Aliases != nil {
+		t.Fatalf("unexpected %+v", got)
+	}
+}
+
+func TestParseGrype_Invalid(t *testing.T) {
+	if _, err := parseGrype([]byte("not json")); err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
+func TestDedupMergesExploitData(t *testing.T) {
+	out := dedup([]Vulnerability{
+		{ID: "CVE-1", Source: "osv", Aliases: []string{"GHSA-1"}},
+		{ID: "CVE-1", Source: "grype", Aliases: []string{"GHSA-1", "GHSA-2"}, KnownExploited: true, Ransomware: true, EPSS: 0.7},
+		{ID: "CVE-2", Source: "grype", EPSS: 0.1},
+	})
+	want := []Vulnerability{
+		{ID: "CVE-1", Source: "osv", Aliases: []string{"GHSA-1", "GHSA-2"}, KnownExploited: true, Ransomware: true, EPSS: 0.7},
+		{ID: "CVE-2", Source: "grype", EPSS: 0.1},
+	}
+	if !reflect.DeepEqual(out, want) {
+		t.Fatalf("dedup:\n got %+v\nwant %+v", out, want)
 	}
 }

@@ -1,0 +1,89 @@
+# GoReleaser builds the daemon for every platform, packages it, writes SBOMs
+# and checksums. Publishing is done by .github/workflows/release.yml after the
+# archives are attested, so the release job runs this with --skip=publish.
+#
+# The darwin watcher uses FSEvents through cgo (CoreServices), so darwin
+# targets build with CGO_ENABLED=1 and only on macOS; everything else is
+# CGO_ENABLED=0 and builds anywhere. release.yml and ci.yml run one job per
+# platform (darwin on a macOS runner).
+#
+#   make snapshot   # local dry run into dist/ for this host's OS family (SBOMs skipped)
+#
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: gated
+
+builds:
+  - id: gated
+    main: ./cmd/gated
+    binary: gated
+    env:
+      - CGO_ENABLED={{ if eq .Os "darwin" }}1{{ else }}0{{ end }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      # the Windows watcher is a stub; one target is enough until it is not
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+      - -buildvcs=true
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.buildDate={{ .CommitDate }}
+    # reproducible binaries: the commit time, not the build time
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: gated
+    ids: [gated]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: true
+    # reproducible archives: fixed owner and mtime for every entry
+    builds_info: &fileinfo
+      owner: root
+      group: root
+      mtime: "{{ .CommitDate }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - src: LICENSE
+        info: *fileinfo
+      - src: README.md
+        info: *fileinfo
+      - src: CHANGELOG.md
+        info: *fileinfo
+      - src: configs/config.example.yaml
+        info: *fileinfo
+      - src: init/systemd/*.service
+        info: *fileinfo
+
+# CycloneDX SBOM of each binary, from its embedded build info (needs syft on PATH).
+sboms:
+  - id: binaries
+    artifacts: binary
+    documents:
+      - "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}.cdx.json"
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}"
+
+# Release notes come from CHANGELOG.md (release-please), not from GoReleaser.
+changelog:
+  disable: true
+
+# Named explicitly so `goreleaser check` and snapshots work without a remote.
+release:
+  github:
+    owner: muratcanozdemir
+    name: gated

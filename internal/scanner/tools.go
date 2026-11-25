@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/muratcanozdemir/gated/internal/resolver"
@@ -20,6 +21,19 @@ type Vulnerability struct {
 	FixedIn     string  `json:"fixed_in,omitempty"`
 	Description string  `json:"description,omitempty"`
 	Source      string  `json:"source"` // "grype" or "osv"
+
+	// Aliases are other IDs of the same vulnerability (e.g. the CVE behind
+	// a GHSA), so policy lists and waivers keyed by CVE still match.
+	Aliases []string `json:"aliases,omitempty"`
+	// KnownExploited: listed in CISA's Known Exploited Vulnerabilities
+	// catalog, per grype's vulnerability DB (grype >= 0.88), which grype
+	// refreshes on its own: no list to maintain in the policy data.
+	KnownExploited bool `json:"known_exploited,omitempty"`
+	// Ransomware: KEV says it is known to be used in ransomware campaigns.
+	Ransomware bool `json:"ransomware,omitempty"`
+	// EPSS is the highest FIRST EPSS score (probability of exploitation in
+	// the next 30 days, 0-1) of the vulnerability or its aliases.
+	EPSS float64 `json:"epss,omitempty"`
 }
 
 // --- syft ---
@@ -65,15 +79,34 @@ type grypeOutput struct {
 }
 
 type grypeMatch struct {
-	Vulnerability grypeVuln `json:"vulnerability"`
+	Vulnerability          grypeVuln          `json:"vulnerability"`
+	RelatedVulnerabilities []grypeExploitInfo `json:"relatedVulnerabilities"`
 }
 
 type grypeVuln struct {
-	ID          string      `json:"id"`
+	grypeExploitInfo
 	Severity    string      `json:"severity"`
 	Fix         grypeFix    `json:"fix"`
 	Cvss        []grypeCVSS `json:"cvss"`
 	Description string      `json:"description"`
+}
+
+// grypeExploitInfo is what grype reports, on a vulnerability and on each of
+// its related vulnerabilities, about exploitation in the wild.
+type grypeExploitInfo struct {
+	ID             string      `json:"id"`
+	KnownExploited []grypeKEV  `json:"knownExploited"`
+	EPSS           []grypeEPSS `json:"epss"`
+}
+
+type grypeKEV struct {
+	CVE                        string `json:"cve"`
+	KnownRansomwareCampaignUse string `json:"knownRansomwareCampaignUse"`
+}
+
+type grypeEPSS struct {
+	CVE  string  `json:"cve"`
+	EPSS float64 `json:"epss"`
 }
 
 type grypeFix struct {
@@ -100,8 +133,13 @@ func runGrype(ctx context.Context, bin, path string) ([]Vulnerability, error) {
 		return nil, fmt.Errorf("%w: %s", err, stderr.String())
 	}
 
+	return parseGrype(stdout.Bytes())
+}
+
+// parseGrype maps grype's JSON report to vulnerabilities.
+func parseGrype(report []byte) ([]Vulnerability, error) {
 	var out grypeOutput
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+	if err := json.Unmarshal(report, &out); err != nil {
 		return nil, fmt.Errorf("parse grype output: %w", err)
 	}
 
@@ -119,9 +157,28 @@ func runGrype(ctx context.Context, bin, path string) ([]Vulnerability, error) {
 		if len(m.Vulnerability.Cvss) > 0 {
 			v.CVSS = m.Vulnerability.Cvss[0].Metrics.BaseScore
 		}
+		v.addExploitInfo(m.Vulnerability.grypeExploitInfo)
+		for _, r := range m.RelatedVulnerabilities {
+			if r.ID != "" && r.ID != v.ID && !slices.Contains(v.Aliases, r.ID) {
+				v.Aliases = append(v.Aliases, r.ID)
+			}
+			v.addExploitInfo(r)
+		}
 		vulns = append(vulns, v)
 	}
 	return vulns, nil
+}
+
+func (v *Vulnerability) addExploitInfo(info grypeExploitInfo) {
+	for _, k := range info.KnownExploited {
+		v.KnownExploited = true
+		if strings.EqualFold(k.KnownRansomwareCampaignUse, "known") {
+			v.Ransomware = true
+		}
+	}
+	for _, e := range info.EPSS {
+		v.EPSS = max(v.EPSS, e.EPSS)
+	}
 }
 
 // --- osv-scanner ---

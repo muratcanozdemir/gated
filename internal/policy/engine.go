@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,10 +85,19 @@ func (e *Engine) Evaluate(inputJSON []byte) (*Verdict, error) {
 // dir into a fresh prepared query and, only on success, swaps it in — a
 // syntax or compile error leaves the previously-loaded policies live. This
 // is called once at startup and again on each SIGHUP reload.
+//
+// Rego unit tests (*_test.rego, run with `opa test`) are skipped: they are
+// not policy, and they may sit next to the policies they test.
 func (e *Engine) ValidatePolicies() error {
-	regoFiles, err := filepath.Glob(filepath.Join(e.policyDir, "*.rego"))
+	matches, err := filepath.Glob(filepath.Join(e.policyDir, "*.rego"))
 	if err != nil {
 		return fmt.Errorf("glob policy dir: %w", err)
+	}
+	var regoFiles []string
+	for _, f := range matches {
+		if !strings.HasSuffix(f, "_test.rego") {
+			regoFiles = append(regoFiles, f)
+		}
 	}
 	if len(regoFiles) == 0 {
 		return fmt.Errorf("no .rego files in %s", e.policyDir)
@@ -118,7 +129,36 @@ func (e *Engine) ValidatePolicies() error {
 	e.query = pq
 	e.mu.Unlock()
 
+	for _, w := range e.configWarnings(ctx, loadPaths) {
+		slog.Warn("policy configuration", "warning", w)
+	}
+
 	return nil
+}
+
+// configWarnings evaluates data.gate.waiver_problems: policy data that is
+// ignored (an expired or undated vulnerability waiver, say) and should be
+// cleaned up. It never fails a load: the rule is optional, and a custom
+// policy set need not define it.
+func (e *Engine) configWarnings(ctx context.Context, loadPaths []string) []string {
+	rs, err := rego.New(
+		rego.Query("data.gate.waiver_problems"),
+		rego.Load(loadPaths, nil),
+	).Eval(ctx)
+	if err != nil {
+		slog.Debug("policy configuration check skipped", "err", err)
+		return nil
+	}
+	var warnings []string
+	for _, r := range rs {
+		for _, expr := range r.Expressions {
+			if reasons, ok := extractReasons(expr.Value); ok {
+				warnings = append(warnings, reasons...)
+			}
+		}
+	}
+	sort.Strings(warnings)
+	return warnings
 }
 
 // --- OPA output parsing ---

@@ -81,7 +81,9 @@ sudo journalctl -u gated -f
 make build             # native platform
 make build-all         # linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64
 make test              # unit tests with race detector
-make check             # build + validate policies + vet
+make check             # build + validate policies + vet + policy tests
+make policy-test       # opa fmt/check/test on policy/ (same OPA version the daemon embeds)
+make snapshot          # GoReleaser dry run into dist/ (this host's OS family)
 make tidy              # go mod tidy
 ```
 
@@ -89,7 +91,30 @@ Version is injected at build time via `-ldflags`:
 
 ```bash
 ./gated -version
-# gated v0.3.0 (commit=a1b2c3d, built=2026-05-09T20:00:00Z, linux/amd64)
+# gated 0.3.0 (commit=a1b2c3d, built=2026-05-09T20:00:00Z, linux/amd64)
+```
+
+## Releases
+
+Releases are cut by [release-please](https://github.com/googleapis/release-please)
+from [Conventional Commits](https://www.conventionalcommits.org/) on `main`: it
+keeps a release PR open with the next version and `CHANGELOG.md`; merging it tags
+`vX.Y.Z` and creates the GitHub release. `.github/workflows/release.yml` then
+builds every platform with [GoReleaser](https://goreleaser.com) (darwin on a macOS
+runner, since the FSEvents watcher needs cgo) and attaches to the release:
+
+| Asset | Contents |
+|-------|----------|
+| `gated_X.Y.Z_OS_ARCH.tar.gz` (`.zip` on Windows) | binary, LICENSE, README, CHANGELOG, example config, systemd units |
+| `gated_X.Y.Z_OS_ARCH.cdx.json` | CycloneDX SBOM of the binary |
+| `gated-policy_X.Y.Z.tar.gz` | policy bundle: `policy/*.rego` (no tests) + `data.json` |
+| `*.provenance.sigstore.json`, `*.sbom.sigstore.json` | SLSA provenance / SBOM attestations |
+| `SHA256SUMS` | checksums of the archives, SBOMs and policy bundle |
+
+Verify a download:
+
+```bash
+gh attestation verify gated_0.3.0_linux_amd64.tar.gz --repo muratcanozdemir/gated
 ```
 
 ## Configuration
@@ -142,38 +167,88 @@ For full npm coverage, watch `node_modules/` instead.
 
 Policies are OPA Rego files in the `policy/` directory. They share a common
 interface: any rule producing a string in `data.gate.deny` causes the package
-to be blocked.
+to be blocked. `common.rego` holds the shared helpers; it reads the scan result
+defensively, so a missing or `null` field (e.g. no licenses because syft failed)
+can never make a deny rule silently not fire.
 
 ### license.rego
 
-Allowlist-based SPDX enforcement. Packages with blocked licenses (AGPL, SSPL,
-BUSL, Elastic-2.0) are denied. Packages with no detected license are denied
-(unknown obligation = unacceptable risk).
+Allowlist-based SPDX enforcement, case-insensitive. Packages with blocked
+licenses (AGPL, SSPL, BUSL, Elastic-2.0) are denied. Packages with no detected
+license are denied (unknown obligation = unacceptable risk). SPDX expressions
+are understood: `MIT OR GPL-3.0-only` passes (you may choose MIT),
+`MIT AND GPL-3.0-only` does not; with parentheses every identifier must be
+approved (conservative).
 
 ### vulnerability.rego
 
 Severity-gated with nuance:
 
 - Critical severity: always denied.
-- High severity + CVSS ≥ 9.0: always denied.
+- CVSS ≥ 9.0 (`critical_cvss`): denied whatever the scanner's severity label.
 - High severity + fix available: denied (upgrade available, no excuse).
-- Medium severity + in CISA KEV list: denied (actively exploited).
-- Total vulnerability count exceeds threshold: denied.
+- Known exploited (CISA KEV): denied at any severity.
+- EPSS ≥ `epss_threshold` (off unless set, e.g. `0.5`): denied as likely to be
+  exploited soon.
+- More distinct vulnerability IDs than `max_total_vulnerabilities`: denied (a
+  CVE reported by both grype and osv-scanner counts once).
+
+Exploitation data is live: grype's vulnerability DB carries CISA KEV and FIRST
+EPSS (grype ≥ 0.88; `install-tools.sh` pins 0.122.1), grype refreshes it on its
+own, and gated passes it to the policy for each vulnerability, including the CVE
+behind a GHSA. There is no CVE list to maintain. `known_exploited_cves` in
+`data.json` is only for extra IDs of your own; it is empty by default. Keep the
+grype DB fresh: grype refuses to scan with a DB older than 5 days, and a failed
+scan fails open (or is denied with `require_clean_scan`).
+
+Accept a vulnerability for a while with a waiver. Every waiver must expire;
+expired or undated waivers are ignored and logged as warnings at startup,
+on reload and by `gated -validate`:
+
+```json
+"vulnerability_waivers": {
+  "CVE-2024-0001": {
+    "reason": "not reachable: we never parse untrusted YAML (SEC-123)",
+    "expires": "2027-01-31",
+    "packages": ["pypi/pyyaml"]
+  }
+}
+```
+
+`packages` is optional; without it the waiver applies to every package. A waiver
+keyed by a CVE also covers the same vulnerability reported under a GHSA ID.
 
 ### provenance.rego
 
 Supply chain origin checks:
 
-- Explicit blocklist of known-malicious packages (typosquats, compromised versions).
-- Configurable typosquat name patterns per ecosystem.
-- Maven `groupId` namespace allowlist.
-- Go module host prefix allowlist.
+- Explicit blocklist of known-malicious packages (`blocked_packages`), either
+  every version (`"npm/evil": "reason"`) or only compromised releases
+  (`"npm/ua-parser-js": {"reason": "...", "versions": ["0.7.29"]}`).
+- Typosquats: a name one edit (insertion, deletion, substitution, adjacent
+  swap) away from an entry in `popular_packages` is denied, unless listed in
+  `typosquat_allowlist`. Names shorter than `typosquat_min_length` are not
+  compared.
+- Maven `groupId` namespace allowlist and Go module host prefix allowlist,
+  matched on a `.` / `/` boundary (`org.apache` approves `org.apache.commons`,
+  not `org.apachex`).
 - Optional: deny packages where scan tools errored (`require_clean_scan`).
+
+Names are compared in canonical form: PyPI per PEP 503, npm case-insensitive.
+
+### Testing policies
+
+Each policy has Rego unit tests next to it (`*_test.rego`; the daemon skips
+them when loading). `make policy-test` runs `opa fmt`, `opa check --strict` and
+`opa test` with a coverage gate, using the OPA version from `go.mod`, so the
+tests run on the same engine the daemon embeds.
 
 ### Tuning
 
-Edit `policy/data.json` to adjust approved licenses, blocked packages, namespace
-rules, CISA KEV CVEs, and vulnerability thresholds. After editing, reload:
+Edit `policy/data.json` to adjust approved licenses, blocked packages, popular
+package lists, namespace rules, extra known-exploited CVEs, vulnerability thresholds (CVSS, EPSS) and
+waivers. Every knob has a default in `policy/common.rego`, so a `data.json` from
+an older release keeps working. After editing, reload:
 
 ```bash
 # System service

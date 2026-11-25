@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -130,14 +131,28 @@ func extractLicenses(sbom *SyftOutput) []string {
 	return out
 }
 
+// dedup merges vulnerabilities reported under the same ID (by grype and
+// osv-scanner, say), keeping the first report and folding in what only the
+// others know: aliases and exploitation data.
 func dedup(vulns []Vulnerability) []Vulnerability {
-	seen := make(map[string]bool)
+	index := make(map[string]int)
 	var out []Vulnerability
 	for _, v := range vulns {
-		if !seen[v.ID] {
-			seen[v.ID] = true
+		i, seen := index[v.ID]
+		if !seen {
+			index[v.ID] = len(out)
 			out = append(out, v)
+			continue
 		}
+		kept := &out[i]
+		for _, a := range v.Aliases {
+			if !slices.Contains(kept.Aliases, a) {
+				kept.Aliases = append(kept.Aliases, a)
+			}
+		}
+		kept.KnownExploited = kept.KnownExploited || v.KnownExploited
+		kept.Ransomware = kept.Ransomware || v.Ransomware
+		kept.EPSS = max(kept.EPSS, v.EPSS)
 	}
 	return out
 }

@@ -1,10 +1,15 @@
 package policy
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/muratcanozdemir/gated/internal/resolver"
+	"github.com/muratcanozdemir/gated/internal/scanner"
 )
 
 // policyDir points at the repo's real policy/ directory, so these tests
@@ -177,5 +182,195 @@ func writeRego(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+// The daemon hands the policies a marshalled scanner.ScanResult; a nil
+// Licenses slice (syft failed or found nothing) becomes JSON null. That
+// must deny, not make the no-license rule undefined.
+func TestEvaluate_ScanResultWithoutLicensesDenied(t *testing.T) {
+	e := newTestEngine(t)
+	input, err := json.Marshal(&scanner.ScanResult{
+		Package: &resolver.Package{Ecosystem: "pypi", Name: "somepkg", Version: "1.0.0"},
+		Errors:  []string{"syft: exit status 1"},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(input), `"licenses":null`) {
+		t.Fatalf("test premise changed: licenses not null in %s", input)
+	}
+
+	v, err := e.Evaluate(input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Allowed {
+		t.Fatal("expected deny for package without licenses, got allow")
+	}
+}
+
+func TestValidatePolicies_SkipsRegoTests(t *testing.T) {
+	dir := t.TempDir()
+	writeRego(t, dir, "gate.rego", "package gate\n\nimport rego.v1\n\ndeny contains \"x\" if input.bad\n")
+	writeRego(t, dir, "gate_test.rego", "package gate_test\n\nthis would not compile\n")
+
+	e, err := NewEngine(dir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if err := e.ValidatePolicies(); err != nil {
+		t.Fatalf("ValidatePolicies loaded a _test.rego file: %v", err)
+	}
+}
+
+func TestValidatePolicies_OnlyRegoTestsIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	writeRego(t, dir, "gate_test.rego", "package gate_test\n")
+
+	e, err := NewEngine(dir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if err := e.ValidatePolicies(); err == nil {
+		t.Fatal("expected an error for a policy dir with only test files")
+	}
+}
+
+// copyPolicies copies the shipped .rego policies (not tests, not data.json)
+// into a fresh directory.
+func copyPolicies(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	files, err := filepath.Glob(filepath.Join(policyDir, "*.rego"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.rego") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeRego(t, dir, filepath.Base(f), string(b))
+	}
+	return dir
+}
+
+// Every data.json knob has a default, so the policies load and decide
+// without one (or with one from an older release).
+func TestPolicies_WithoutDataJSON(t *testing.T) {
+	e, err := NewEngine(copyPolicies(t))
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if err := e.ValidatePolicies(); err != nil {
+		t.Fatalf("ValidatePolicies: %v", err)
+	}
+
+	input := evalInput(t, map[string]interface{}{
+		"package":  map[string]interface{}{"ecosystem": "pypi", "name": "somepkg", "version": "1.0.0"},
+		"licenses": []string{"MIT"},
+		"vulnerabilities": []map[string]interface{}{
+			{"id": "CVE-2024-0001", "severity": "unknown", "cvss": 9.8, "source": "osv"},
+		},
+	})
+	v, err := e.Evaluate(input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	// No approved licenses configured, and the default CVSS bar of 9.0.
+	want := map[string]bool{
+		"unapproved license: MIT (package: somepkg@1.0.0) — submit for review":     true,
+		"unknown-severity vulnerability CVE-2024-0001 (CVSS 9.8) in somepkg@1.0.0": true,
+	}
+	if len(v.Reasons) != len(want) {
+		t.Fatalf("got reasons %q, want %d", v.Reasons, len(want))
+	}
+	for _, r := range v.Reasons {
+		if !want[r] {
+			t.Errorf("unexpected reason %q", r)
+		}
+	}
+}
+
+func TestConfigWarnings_ExpiredWaiver(t *testing.T) {
+	dir := copyPolicies(t)
+	writeRego(t, dir, "data.json", `{"vulnerability_waivers": {
+		"CVE-1": {"reason": "old", "expires": "2020-01-01"},
+		"CVE-2": {"reason": "no date"},
+		"CVE-3": {"reason": "fine", "expires": "2200-01-01"}
+	}}`)
+
+	e, err := NewEngine(dir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	paths, err := filepath.Glob(filepath.Join(dir, "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.configWarnings(context.Background(), paths)
+	want := []string{
+		"waiver for CVE-1 expired on 2020-01-01: ignored",
+		`waiver for CVE-2 has no valid "expires" date (YYYY-MM-DD): ignored`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("configWarnings:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestConfigWarnings_RuleNotDefined(t *testing.T) {
+	dir := t.TempDir()
+	writeRego(t, dir, "gate.rego", "package gate\n\nimport rego.v1\n\ndeny contains \"x\" if input.bad\n")
+	e, err := NewEngine(dir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if got := e.configWarnings(context.Background(), []string{filepath.Join(dir, "gate.rego")}); len(got) != 0 {
+		t.Fatalf("expected no warnings, got %q", got)
+	}
+}
+
+// The scanner's exploitation fields reach the policy under the names it
+// reads: a KEV flag on a GHSA-keyed match denies, and a CVE waiver covers it
+// through its alias.
+func TestEvaluate_ScannerExploitFieldsContract(t *testing.T) {
+	e := newTestEngine(t)
+	result := &scanner.ScanResult{
+		Package:  &resolver.Package{Ecosystem: "maven", Name: "org.apache.logging.log4j:log4j-core", Version: "2.14.1"},
+		Licenses: []string{"Apache-2.0"},
+		Vulnerabilities: []scanner.Vulnerability{{
+			ID: "GHSA-jfh8-c2jp-5v3q", Severity: "medium", CVSS: 5.0, Source: "grype",
+			Aliases: []string{"CVE-2021-44228"}, KnownExploited: true, Ransomware: true, EPSS: 0.94,
+		}},
+	}
+	input, err := result.InputJSON()
+	if err != nil {
+		t.Fatalf("InputJSON: %v", err)
+	}
+	v, err := e.Evaluate(input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	want := "known-exploited vulnerability GHSA-jfh8-c2jp-5v3q (medium) in org.apache.logging.log4j:log4j-core@2.14.1 — in CISA KEV, used in ransomware campaigns"
+	if len(v.Reasons) != 1 || v.Reasons[0] != want {
+		t.Fatalf("got %q, want [%q]", v.Reasons, want)
+	}
+
+	dir := copyPolicies(t)
+	writeRego(t, dir, "data.json", `{"approved_licenses": ["Apache-2.0"],
+		"vulnerability_waivers": {"CVE-2021-44228": {"reason": "test", "expires": "2200-01-01"}}}`)
+	waived, err := NewEngine(dir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if err := waived.ValidatePolicies(); err != nil {
+		t.Fatalf("ValidatePolicies: %v", err)
+	}
+	if v, err := waived.Evaluate(input); err != nil || !v.Allowed {
+		t.Fatalf("expected the CVE waiver to cover the GHSA via its alias: %+v, %v", v, err)
 	}
 }
