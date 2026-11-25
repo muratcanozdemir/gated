@@ -58,7 +58,11 @@ type SyftLicense struct {
 }
 
 func runSyft(ctx context.Context, bin, path string) (*SyftOutput, error) {
-	cmd := exec.CommandContext(ctx, bin, path, "-o", "json", "--quiet")
+	// The installed-package npm cataloger is off by default for directory
+	// scans, and it is the one that reads package/package.json in an
+	// unpacked npm tarball: without it, an npm package has no license.
+	cmd := exec.CommandContext(ctx, bin, path, "-o", "json", "--quiet",
+		"--select-catalogers", "+javascript-package-cataloger")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -225,7 +229,8 @@ func buildPURL(pkg *resolver.Package) string {
 		if pkg.Name == "unknown" {
 			return ""
 		}
-		return fmt.Sprintf("pkg:npm/%s@%s", pkg.Name, pkg.Version)
+		// A scope's "@" is percent-encoded in a package URL.
+		return fmt.Sprintf("pkg:npm/%s@%s", strings.Replace(pkg.Name, "@", "%40", 1), pkg.Version)
 	default:
 		return ""
 	}
