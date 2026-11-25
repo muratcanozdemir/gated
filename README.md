@@ -1,7 +1,7 @@
 # gated
 
 Supply chain gate daemon. Intercepts package manager installs at the OS level,
-scans artifacts with syft/grype/osv-scanner, evaluates OPA policies, and blocks
+scans artifacts with syft and grype, evaluates OPA policies, and blocks
 packages that violate license, vulnerability, or provenance rules.
 
 No wrappers. No symlinks. No devcontainer. One binary, any ecosystem.
@@ -20,7 +20,8 @@ pip install requests
     ├─ verdict cache hit → allow / deny immediately
     │
     └─ cache miss → resolve package identity from path
-                  → syft (SBOM + license) + grype + osv-scanner (vulns)
+                  → unpack (wheels, sdists, npm tarballs, crates; jars as is)
+                  → syft (SBOM + license) + grype (vulns: the bytes, and the package URL)
                   → OPA policy evaluation
                   → cache verdict
                   → allow / deny
@@ -193,7 +194,7 @@ Severity-gated with nuance:
 - EPSS ≥ `epss_threshold` (off unless set, e.g. `0.5`): denied as likely to be
   exploited soon.
 - More distinct vulnerability IDs than `max_total_vulnerabilities`: denied (a
-  CVE reported by both grype and osv-scanner counts once).
+  CVE reported by both the byte scan and the package URL lookup counts once).
 
 Exploitation data is live: grype's vulnerability DB carries CISA KEV and FIRST
 EPSS (grype ≥ 0.88; `install-tools.sh` pins 0.122.1), grype refreshes it on its
@@ -313,7 +314,7 @@ internal/
 │   └── watcher_windows.go        Stub (three strategies documented)
 ├── quarantine/             Atomic rename gating (cross-platform)
 ├── resolver/               Path → (ecosystem, name, version) mapping
-├── scanner/                Orchestrates syft, grype, osv-scanner
+├── scanner/                Unpacks artifacts, orchestrates syft and grype
 ├── policy/                 OPA evaluation engine
 └── verdict/                Filesystem-backed verdict cache
 ```
@@ -341,7 +342,7 @@ cache is invalidated on reload.
 
 ## Scan tools
 
-gated shells out to three tools, all Apache-2.0 licensed. Policy evaluation
+gated shells out to two tools, both Apache-2.0 licensed. Policy evaluation
 (OPA/Rego) runs in-process via the OPA Go SDK — no external `opa` binary
 required.
 
@@ -349,9 +350,24 @@ required.
 |------|---------|---------|
 | [syft](https://github.com/anchore/syft) | SBOM generation, license detection | Anchore |
 | [grype](https://github.com/anchore/grype) | Vulnerability scanning | Anchore |
-| [osv-scanner](https://github.com/google/osv-scanner) | OSV advisory cross-reference | Google |
 
-Install all three with `./scripts/install-tools.sh` (system-wide) or
+How an artifact is scanned:
+
+- Archives syft cannot read as a file (wheels, sdists, npm tarballs, crates)
+  are unpacked into a temporary directory first, with limits (no entries
+  outside it, no links, 50k entries, 1 GiB). Jars are read as files.
+- grype scans the bytes (catching libraries bundled inside a jar) and also
+  looks the package up by its package URL, e.g. `pkg:pypi/pyyaml@5.3.1`
+  (catching what the bytes miss, such as sdists). The results are merged.
+- Licenses come from syft, as SPDX IDs where syft can tell (syft 1.2x or
+  newer maps Maven license URLs). For Python packages without one, gated
+  reads the core metadata (`License-Expression`, or a `License` field that is
+  an identifier).
+
+`tools.osv_scanner` is no longer used: grype's database covers the same
+advisories. Older configs that set it still load, with a warning.
+
+Install both with `./scripts/install-tools.sh` (system-wide) or
 `./scripts/install-user.sh` (per-user to `~/.local/bin`).
 
 ## Limitations

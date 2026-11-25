@@ -46,64 +46,80 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 		ScannedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// syft (SBOM/licenses), grype, and osv-scanner are independent
-	// subprocess invocations against the same artifact — run them
-	// concurrently so wall-clock cost is max(syft,grype,osv) instead of
-	// their sum. The calling process stays frozen in-kernel for this
-	// entire duration under fanotify, so this is the hottest path in the
-	// daemon.
+	// What the scanners read: the artifact itself (jars), or its unpacked
+	// contents for archives syft cannot read as a file (wheels, sdists, npm
+	// tarballs, crates). If unpacking fails, scan the file and say why.
+	target := pkg.Path
+	dir, cleanup, err := unpack(pkg.Path)
+	defer cleanup()
+	switch {
+	case err != nil:
+		slog.Warn("unpack failed, scanning the file as is", "path", pkg.Path, "err", err)
+		result.Errors = append(result.Errors, err.Error())
+	case dir != "":
+		target = "dir:" + dir
+	}
+
+	// Three independent subprocess runs, concurrently, so the wall-clock
+	// cost is the slowest one, not their sum. The installing process waits
+	// for this (frozen in-kernel under fanotify): it is the hottest path in
+	// the daemon.
+	//   - syft on the bytes: SBOM and licenses.
+	//   - grype on the bytes: vulnerabilities of everything inside, including
+	//     libraries bundled in a jar.
+	//   - grype by identity (the package URL gated resolved): vulnerabilities
+	//     of the package itself, also where the bytes yield nothing (sdists).
 	var (
-		mu       sync.Mutex
-		wg       sync.WaitGroup
-		vulns    []Vulnerability
-		osvVulns []Vulnerability
+		mu          sync.Mutex
+		wg          sync.WaitGroup
+		vulns, byID []Vulnerability
 	)
+	fail := func(tool string, err error) {
+		slog.Warn(tool+" failed", "path", pkg.Path, "err", err)
+		result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", tool, err))
+	}
 
 	wg.Add(3)
-
 	go func() {
 		defer wg.Done()
-		sbom, err := runSyft(ctx, o.tools.Syft, pkg.Path)
+		sbom, err := runSyft(ctx, o.tools.Syft, target)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
-			slog.Warn("syft failed", "path", pkg.Path, "err", err)
-			result.Errors = append(result.Errors, fmt.Sprintf("syft: %v", err))
+			fail("syft", err)
 			return
 		}
 		result.SBOM = sbom
 		result.Licenses = extractLicenses(sbom)
 	}()
-
 	go func() {
 		defer wg.Done()
-		v, err := runGrype(ctx, o.tools.Grype, pkg.Path)
+		v, err := runGrype(ctx, o.tools.Grype, target)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
-			slog.Warn("grype failed", "path", pkg.Path, "err", err)
-			result.Errors = append(result.Errors, fmt.Sprintf("grype: %v", err))
+			fail("grype", err)
 			return
 		}
 		vulns = v
 	}()
-
 	go func() {
 		defer wg.Done()
-		v, err := runOSV(ctx, o.tools.OsvScanner, pkg)
+		v, err := runGrypePURL(ctx, o.tools.Grype, buildPURL(pkg))
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
-			slog.Warn("osv-scanner failed", "path", pkg.Path, "err", err)
-			result.Errors = append(result.Errors, fmt.Sprintf("osv-scanner: %v", err))
+			fail("grype (package URL)", err)
 			return
 		}
-		osvVulns = v
+		byID = v
 	}()
-
 	wg.Wait()
 
-	result.Vulnerabilities = dedup(append(vulns, osvVulns...))
+	result.Vulnerabilities = dedup(append(vulns, byID...))
+	if len(result.Licenses) == 0 && pkg.Ecosystem == "pypi" && dir != "" {
+		result.Licenses = pythonMetadataLicenses(dir)
+	}
 
 	return result, nil
 }
@@ -113,6 +129,8 @@ func (r *ScanResult) InputJSON() ([]byte, error) {
 	return json.Marshal(r)
 }
 
+// extractLicenses lists the distinct licenses syft found, as SPDX where syft
+// could tell (a Maven license URL becomes "Apache-2.0"), else as written.
 func extractLicenses(sbom *SyftOutput) []string {
 	if sbom == nil {
 		return nil
@@ -121,7 +139,10 @@ func extractLicenses(sbom *SyftOutput) []string {
 	var out []string
 	for _, a := range sbom.Artifacts {
 		for _, l := range a.Licenses {
-			id := l.Value
+			id := l.SPDXExpression
+			if id == "" {
+				id = l.Value
+			}
 			if id != "" && !seen[id] {
 				seen[id] = true
 				out = append(out, id)
@@ -131,8 +152,8 @@ func extractLicenses(sbom *SyftOutput) []string {
 	return out
 }
 
-// dedup merges vulnerabilities reported under the same ID (by grype and
-// osv-scanner, say), keeping the first report and folding in what only the
+// dedup merges vulnerabilities reported under the same ID (by the byte scan
+// and the package URL lookup, say), keeping the first report and folding in what only the
 // others know: aliases and exploitation data.
 func dedup(vulns []Vulnerability) []Vulnerability {
 	index := make(map[string]int)

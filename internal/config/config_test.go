@@ -41,7 +41,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.WatcherMode != "auto" {
 		t.Errorf("WatcherMode default = %q, want auto", cfg.WatcherMode)
 	}
-	if cfg.Tools.Syft != "syft" || cfg.Tools.Grype != "grype" || cfg.Tools.OsvScanner != "osv-scanner" {
+	if cfg.Tools.Syft != "syft" || cfg.Tools.Grype != "grype" || cfg.Tools.OsvScanner != "" {
 		t.Errorf("unexpected tool defaults: %+v", cfg.Tools)
 	}
 }
@@ -68,6 +68,11 @@ tools:
 	want := filepath.Join(home, ".local/bin/syft")
 	if cfg.Tools.Syft != want {
 		t.Errorf("Tools.Syft = %q, want %q (expandPath should apply to tool paths)", cfg.Tools.Syft, want)
+	}
+	// Deprecated, but configs that still set it must load, and the daemon
+	// needs to see it to warn.
+	if cfg.Tools.OsvScanner == "" {
+		t.Error("tools.osv_scanner from an existing config was dropped; the deprecation warning needs it")
 	}
 }
 

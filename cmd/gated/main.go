@@ -274,10 +274,12 @@ func initLogging(level string) {
 // missing binary, so this doesn't change behavior — it just surfaces the
 // problem immediately instead of on the first cache miss.
 func warnIfMissing(tools config.Tools) {
+	if tools.OsvScanner != "" {
+		slog.Warn("tools.osv_scanner is deprecated and ignored: grype covers the same advisories; remove it from the config")
+	}
 	for name, bin := range map[string]string{
-		"syft":        tools.Syft,
-		"grype":       tools.Grype,
-		"osv-scanner": tools.OsvScanner,
+		"syft":  tools.Syft,
+		"grype": tools.Grype,
 	} {
 		if _, err := exec.LookPath(bin); err != nil {
 			slog.Warn("scan tool not found, scans using it will fail open", "tool", name, "path", bin)

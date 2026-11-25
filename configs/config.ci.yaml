@@ -9,7 +9,6 @@ watch_paths:
 tools:
   syft: syft
   grype: grype
-  osv_scanner: osv-scanner
 
 policy_dir: ./policy
 verdict_dir: ./.ci-verdicts

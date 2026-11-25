@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -20,7 +20,7 @@ type Vulnerability struct {
 	CVSS        float64 `json:"cvss"`
 	FixedIn     string  `json:"fixed_in,omitempty"`
 	Description string  `json:"description,omitempty"`
-	Source      string  `json:"source"` // "grype" or "osv"
+	Source      string  `json:"source"` // "grype"
 
 	// Aliases are other IDs of the same vulnerability (e.g. the CVE behind
 	// a GHSA), so policy lists and waivers keyed by CVE still match.
@@ -52,7 +52,9 @@ type SyftArtifact struct {
 
 type SyftLicense struct {
 	Value string `json:"value"`
-	Type  string `json:"spdxExpression"`
+	// SPDXExpression is syft's SPDX reading of Value, e.g. "Apache-2.0" for
+	// a Maven license URL (syft >= 1.2x); empty when it has none.
+	SPDXExpression string `json:"spdxExpression"`
 }
 
 func runSyft(ctx context.Context, bin, path string) (*SyftOutput, error) {
@@ -181,86 +183,28 @@ func (v *Vulnerability) addExploitInfo(info grypeExploitInfo) {
 	}
 }
 
-// --- osv-scanner ---
+// --- grype by package URL ---
 
-type osvOutput struct {
-	Results []osvResult `json:"results"`
-}
-
-type osvResult struct {
-	Packages []osvPackageResult `json:"packages"`
-}
-
-type osvPackageResult struct {
-	Package         osvPkg             `json:"package"`
-	Vulnerabilities []osvVulnerability `json:"vulnerabilities"`
-}
-
-type osvPkg struct {
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Ecosystem string `json:"ecosystem"`
-}
-
-type osvVulnerability struct {
-	ID       string        `json:"id"`
-	Summary  string        `json:"summary"`
-	Severity []osvSeverity `json:"severity"`
-}
-
-type osvSeverity struct {
-	Type  string `json:"type"`
-	Score string `json:"score"`
-}
-
-func runOSV(ctx context.Context, bin string, pkg *resolver.Package) ([]Vulnerability, error) {
-	// osv-scanner supports direct PURL queries.
-	purl := buildPURL(pkg)
+// runGrypePURL looks a package up in grype's DB by its package URL
+// (pkg:pypi/pyyaml@5.3.1), from the identity gated resolved rather than from
+// the bytes. "" (no package URL for the ecosystem) finds nothing.
+func runGrypePURL(ctx context.Context, bin, purl string) ([]Vulnerability, error) {
 	if purl == "" {
 		return nil, nil
 	}
-
-	cmd := exec.CommandContext(ctx, bin, "--format", "json", "--purl", purl)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		// osv-scanner documents exit code 1 as "vulnerabilities found",
-		// not a failure; anything else (including context deadlines) is
-		// a genuine error.
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
-			return nil, fmt.Errorf("%w: %s", err, stderr.String())
-		}
+	f, err := os.CreateTemp("", "gated-purl-*.txt")
+	if err != nil {
+		return nil, err
 	}
-
-	if stdout.Len() == 0 {
-		return nil, nil
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(purl + "\n"); err != nil {
+		_ = f.Close()
+		return nil, err
 	}
-
-	var out osvOutput
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		return nil, fmt.Errorf("parse osv output: %w", err)
+	if err := f.Close(); err != nil {
+		return nil, err
 	}
-
-	var vulns []Vulnerability
-	for _, r := range out.Results {
-		for _, p := range r.Packages {
-			for _, v := range p.Vulnerabilities {
-				vuln := Vulnerability{
-					ID:          v.ID,
-					Description: v.Summary,
-					Source:      "osv",
-				}
-				if len(v.Severity) > 0 {
-					vuln.Severity = normalizeSeverity(v.Severity[0].Score)
-				}
-				vulns = append(vulns, vuln)
-			}
-		}
-	}
-	return vulns, nil
+	return runGrype(ctx, bin, "purl:"+f.Name())
 }
 
 func buildPURL(pkg *resolver.Package) string {
@@ -284,24 +228,5 @@ func buildPURL(pkg *resolver.Package) string {
 		return fmt.Sprintf("pkg:npm/%s@%s", pkg.Name, pkg.Version)
 	default:
 		return ""
-	}
-}
-
-// normalizeSeverity maps CVSS score strings to severity labels.
-func normalizeSeverity(score string) string {
-	// OSV severity scores can be CVSS vectors or numeric.
-	// For simplicity, if we can't parse it, return "unknown".
-	// A proper implementation would parse the CVSS vector.
-	switch {
-	case strings.Contains(score, "CRITICAL"):
-		return "critical"
-	case strings.Contains(score, "HIGH"):
-		return "high"
-	case strings.Contains(score, "MEDIUM"):
-		return "medium"
-	case strings.Contains(score, "LOW"):
-		return "low"
-	default:
-		return "unknown"
 	}
 }

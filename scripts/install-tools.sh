@@ -5,9 +5,8 @@ set -euo pipefail
 # All tools are Apache-2.0 or equivalent permissive licenses.
 # Override versions via environment variables.
 
-SYFT_VERSION="${SYFT_VERSION:-1.20.0}"
+SYFT_VERSION="${SYFT_VERSION:-1.57.2}"
 GRYPE_VERSION="${GRYPE_VERSION:-0.122.1}"
-OSV_SCANNER_VERSION="${OSV_SCANNER_VERSION:-1.9.1}"
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
@@ -63,10 +62,6 @@ install_tool "grype ${GRYPE_VERSION}" \
     "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_${OS}_${ARCH}.tar.gz" \
     "grype"
 
-# OSV-Scanner — Google's vulnerability database scanner.
-install_tool "osv-scanner ${OSV_SCANNER_VERSION}" \
-    "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_${OSV_SCANNER_VERSION}_${OS}_${ARCH}.tar.gz" \
-    "osv-scanner"
 
 # opa is no longer needed — policy compilation/evaluation runs in-process
 # via the OPA Go SDK (internal/policy).

@@ -11,7 +11,7 @@ func TestDedupVulnerabilities(t *testing.T) {
 	in := []Vulnerability{
 		{ID: "CVE-1", Source: "grype"},
 		{ID: "CVE-2", Source: "grype"},
-		{ID: "CVE-1", Source: "osv"}, // duplicate ID from a different source
+		{ID: "CVE-1", Source: "grype"}, // the same vulnerability from the package URL lookup
 	}
 	out := dedup(in)
 	if len(out) != 2 {
@@ -68,24 +68,6 @@ func TestBuildPURL(t *testing.T) {
 				t.Errorf("buildPURL(%+v) = %q, want %q", tt.pkg, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestNormalizeSeverity(t *testing.T) {
-	tests := []struct {
-		score string
-		want  string
-	}{
-		{"CVSS_V3:CRITICAL", "critical"},
-		{"CVSS_V3:HIGH", "high"},
-		{"CVSS_V3:MEDIUM", "medium"},
-		{"CVSS_V3:LOW", "low"},
-		{"garbage", "unknown"},
-	}
-	for _, tt := range tests {
-		if got := normalizeSeverity(tt.score); got != tt.want {
-			t.Errorf("normalizeSeverity(%q) = %q, want %q", tt.score, got, tt.want)
-		}
 	}
 }
 
@@ -158,12 +140,12 @@ func TestParseGrype_Invalid(t *testing.T) {
 
 func TestDedupMergesExploitData(t *testing.T) {
 	out := dedup([]Vulnerability{
-		{ID: "CVE-1", Source: "osv", Aliases: []string{"GHSA-1"}},
+		{ID: "CVE-1", Source: "grype", Aliases: []string{"GHSA-1"}},
 		{ID: "CVE-1", Source: "grype", Aliases: []string{"GHSA-1", "GHSA-2"}, KnownExploited: true, Ransomware: true, EPSS: 0.7},
 		{ID: "CVE-2", Source: "grype", EPSS: 0.1},
 	})
 	want := []Vulnerability{
-		{ID: "CVE-1", Source: "osv", Aliases: []string{"GHSA-1", "GHSA-2"}, KnownExploited: true, Ransomware: true, EPSS: 0.7},
+		{ID: "CVE-1", Source: "grype", Aliases: []string{"GHSA-1", "GHSA-2"}, KnownExploited: true, Ransomware: true, EPSS: 0.7},
 		{ID: "CVE-2", Source: "grype", EPSS: 0.1},
 	}
 	if !reflect.DeepEqual(out, want) {
