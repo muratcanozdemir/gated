@@ -11,8 +11,11 @@ import (
 )
 
 const (
-	quarantineDir    = ".gated-quarantine"
-	quarantineSuffix = ".gated-hold"
+	quarantineDir = ".gated-quarantine"
+	// deniedSuffix marks denied artifacts kept for audit, so that nothing
+	// mistakes them for usable packages. Hold files (being scanned) keep
+	// their name: scanners recognize artifacts by it.
+	deniedSuffix = ".gated-hold"
 )
 
 // Engine handles the quarantine-scan-release cycle.
@@ -102,8 +105,8 @@ func (e *Engine) HandleNewArtifact(path, ecosystem string) {
 	slog.Info("quarantined", "path", path, "ecosystem", ecosystem)
 
 	// Step 2: Run scans against the quarantined file.
-	// The decision function gets the quarantined path so it can scan the actual bytes.
-	// We pass the original path for package identity resolution.
+	// The decision function gets the hold path so it can scan the actual
+	// bytes; it resolves package identity from OriginalPath(holdPath).
 	allowed := e.decisionFn(holdPath, ecosystem, -1)
 
 	// Step 3: Release or delete.
@@ -155,13 +158,25 @@ func (e *Engine) PruneSeen(maxAge time.Duration) int {
 	return pruned
 }
 
-// quarantinePath computes the hold path for a file.
-// Keeps it on the same filesystem (same parent directory) to ensure
-// rename is atomic and doesn't cross mount boundaries.
+// quarantinePath computes the hold path for a file: the same name in a
+// quarantine directory next to it. Same filesystem (same parent directory),
+// so the rename is atomic and doesn't cross mount boundaries. The name must
+// not change: syft and grype decide what a file is (jar, wheel, sdist) by its
+// name, and catalog nothing in, say, "x-1.0.jar.gated-hold".
 func quarantinePath(original string) string {
-	dir := filepath.Dir(original)
-	base := filepath.Base(original)
-	return filepath.Join(dir, quarantineDir, base+quarantineSuffix)
+	return filepath.Join(filepath.Dir(original), quarantineDir, filepath.Base(original))
+}
+
+// OriginalPath maps a hold path (quarantinePath) back to the artifact's
+// original path. The decision function receives the hold path, where the
+// bytes are; package identity comes from the original path, since resolvers
+// read the file name and directory layout (e.g. Maven's group/artifact/version).
+func OriginalPath(hold string) (string, bool) {
+	dir := filepath.Dir(hold)
+	if filepath.Base(dir) != quarantineDir || filepath.Base(hold) == quarantineDir {
+		return "", false
+	}
+	return filepath.Join(filepath.Dir(dir), filepath.Base(hold)), true
 }
 
 // auditQuarantinePath puts denied artifacts in a persistent audit location.
@@ -170,7 +185,7 @@ func auditQuarantinePath(original string) string {
 	base := filepath.Base(original)
 	ts := time.Now().Format("20060102-150405")
 	return filepath.Join(dir, quarantineDir, "denied",
-		fmt.Sprintf("%s_%s%s", ts, base, quarantineSuffix))
+		fmt.Sprintf("%s_%s%s", ts, base, deniedSuffix))
 }
 
 // IsQuarantinePath returns true if the path is inside a quarantine directory.

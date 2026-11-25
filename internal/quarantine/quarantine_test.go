@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/muratcanozdemir/gated/internal/resolver"
 )
 
 func TestHandleNewArtifact_Allow(t *testing.T) {
@@ -101,7 +103,7 @@ func TestIsQuarantinePath(t *testing.T) {
 		want bool
 	}{
 		{"/home/user/.cache/uv/wheels/requests-2.31.0.whl", false},
-		{"/home/user/.cache/uv/wheels/.gated-quarantine/requests-2.31.0.whl.gated-hold", true},
+		{"/home/user/.cache/uv/wheels/.gated-quarantine/requests-2.31.0.whl", true},
 		{"/tmp/.gated-quarantine/denied/something.whl.gated-hold", true},
 	}
 
@@ -125,5 +127,63 @@ func TestPruneSeen(t *testing.T) {
 	pruned := engine.PruneSeen(1 * time.Hour)
 	if pruned != 1 {
 		t.Errorf("pruned %d, want 1", pruned)
+	}
+}
+
+func TestOriginalPath(t *testing.T) {
+	for _, original := range []string{
+		"/home/u/.m2/repository/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar",
+		"/home/u/.cache/pip/requests-2.32.3-py3-none-any.whl",
+		"relative/dir/PyYAML-5.3.1.tar.gz",
+	} {
+		got, ok := OriginalPath(quarantinePath(original))
+		if !ok || got != original {
+			t.Errorf("OriginalPath(quarantinePath(%q)) = %q, %v", original, got, ok)
+		}
+	}
+	for _, notHold := range []string{
+		"/home/u/.m2/repository/x/1.0/x-1.0.jar",                     // not in a quarantine dir
+		"/tmp/" + quarantineDir + "/denied/x-1.0.jar" + deniedSuffix, // denied, kept for audit
+		"/tmp/" + quarantineDir,                                      // the quarantine dir itself
+	} {
+		if got, ok := OriginalPath(notHold); ok {
+			t.Errorf("OriginalPath(%q) = %q, want not a hold path", notHold, got)
+		}
+	}
+}
+
+// Scanners recognize artifacts by file name: the hold file must keep it.
+func TestQuarantinePathKeepsName(t *testing.T) {
+	for _, original := range []string{"/c/x-1.0.jar", "/c/requests-2.32.3-py3-none-any.whl", "/c/PyYAML-5.3.1.tar.gz"} {
+		hold := quarantinePath(original)
+		if filepath.Base(hold) != filepath.Base(original) {
+			t.Errorf("quarantinePath(%q) = %q: name changed", original, hold)
+		}
+		if !IsQuarantinePath(hold) {
+			t.Errorf("quarantinePath(%q) = %q: not recognized as a quarantine path", original, hold)
+		}
+	}
+}
+
+// The decision function receives the hold path and resolves identity from
+// OriginalPath(hold): resolving the hold path itself breaks layout-based
+// resolvers (Maven reads group/artifact/version from the directories), which
+// made quarantine mode allow artifacts as "unresolved" without scanning them.
+func TestHoldPathResolvesThroughOriginalPath(t *testing.T) {
+	cases := map[string]struct{ path, eco, name, version string }{
+		"maven": {"/r/.m2/repository/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar", "maven", "org.apache.commons:commons-lang3", "3.14.0"},
+		"wheel": {"/r/.cache/pip/requests-2.32.3-py3-none-any.whl", "pypi", "requests", "2.32.3"},
+		"sdist": {"/r/.cache/pip/PyYAML-5.3.1.tar.gz", "pypi", "pyyaml", "5.3.1"},
+	}
+	for name, c := range cases {
+		hold := quarantinePath(c.path)
+		orig, ok := OriginalPath(hold)
+		if !ok {
+			t.Fatalf("%s: OriginalPath(%q) failed", name, hold)
+		}
+		pkg := resolver.Resolve(orig, c.eco)
+		if pkg == nil || pkg.Name != c.name || pkg.Version != c.version {
+			t.Errorf("%s: Resolve(OriginalPath(hold)) = %+v, want %s %s", name, pkg, c.name, c.version)
+		}
 	}
 }

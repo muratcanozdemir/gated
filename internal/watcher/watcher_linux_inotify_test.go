@@ -5,7 +5,6 @@ package watcher
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +22,7 @@ func startInotify(t *testing.T, root, ecosystem string) <-chan string {
 	w, err := newInotifyQuarantineWatcher(Config{
 		Paths: []config.WatchPath{{Path: root, Ecosystem: ecosystem}},
 		DecisionFn: func(path, _ string, _ int32) bool {
-			name := strings.TrimSuffix(filepath.Base(path), ".gated-hold")
+			name := filepath.Base(path) // hold files keep the artifact's name
 			if _, dup := once.LoadOrStore(name, true); !dup {
 				gated <- name
 			}
