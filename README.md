@@ -134,7 +134,7 @@ Version is injected at build time via `-ldflags`:
 
 ```bash
 ./gated -version
-# gated 0.3.0 (commit=a1b2c3d, built=2026-05-09T20:00:00Z, linux/amd64)
+# gated 1.0.0 (commit=a1b2c3d, built=2026-05-09T20:00:00Z, linux/amd64)
 ```
 
 ## Releases
@@ -157,7 +157,7 @@ runner, since the FSEvents watcher needs cgo) and attaches to the release:
 Verify a download:
 
 ```bash
-gh attestation verify gated_0.3.0_linux_amd64.tar.gz --repo muratcanozdemir/gated
+gh attestation verify gated_1.0.0_linux_amd64.tar.gz --repo muratcanozdemir/gated
 ```
 
 ## Configuration
@@ -325,15 +325,15 @@ Binary to a generic repo, policies as a separate versioned tarball:
 ```
 internal-tools-generic/
 ├── gated/
-│   ├── v0.3.0/
+│   ├── v1.0.0/
 │   │   ├── gated-linux-amd64
 │   │   ├── gated-linux-arm64
 │   │   ├── gated-darwin-amd64
 │   │   ├── gated-darwin-arm64
 │   │   └── config.example.yaml
-│   └── latest -> v0.3.0
+│   └── latest -> v1.0.0
 └── gated-policy/
-    └── v0.3.0/
+    └── v1.0.0/
         └── policy.tar.gz
 ```
 
