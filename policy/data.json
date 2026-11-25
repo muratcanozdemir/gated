@@ -15,7 +15,6 @@
     "PostgreSQL",
     "Python-2.0"
   ],
-
   "blocked_licenses": [
     "AGPL-3.0-only",
     "AGPL-3.0-or-later",
@@ -23,33 +22,114 @@
     "Elastic-2.0",
     "BUSL-1.1"
   ],
-
   "blocked_packages": {
     "pypi/jeIlyfish": "typosquat of jellyfish — known malware (2019)",
     "pypi/python3-dateutil": "typosquat of python-dateutil — credential stealer",
     "pypi/colourama": "typosquat of colorama — known malware",
-    "npm/event-stream": "compromised in v3.3.6 — flatmap-stream incident",
-    "npm/ua-parser-js": "supply chain attack in 0.7.29/0.8.0/1.0.0",
-    "npm/coa": "compromised — crypto miner injection",
+    "npm/event-stream": {
+      "reason": "compromised: depends on malicious flatmap-stream (2018)",
+      "versions": [
+        "3.3.6"
+      ]
+    },
+    "npm/ua-parser-js": {
+      "reason": "hijacked releases with crypto miner and password stealer (2021)",
+      "versions": [
+        "0.7.29",
+        "0.8.0",
+        "1.0.0"
+      ]
+    },
+    "npm/coa": {
+      "reason": "hijacked releases with credential-stealing malware (2021)",
+      "versions": [
+        "2.0.3",
+        "2.0.4",
+        "2.1.1",
+        "2.1.3",
+        "3.0.1",
+        "3.1.3"
+      ]
+    },
     "cargo/rustdecimal": "typosquat of rust_decimal — known malware"
   },
-
-  "typosquat_patterns": {
+  "popular_packages": {
     "pypi": [
-      "python-",
-      "python3-",
-      "-python",
-      "py-utils",
-      "colour"
+      "requests",
+      "urllib3",
+      "numpy",
+      "pandas",
+      "jellyfish",
+      "colorama",
+      "python-dateutil",
+      "setuptools",
+      "boto3",
+      "botocore",
+      "django",
+      "flask",
+      "cryptography",
+      "pyyaml",
+      "certifi",
+      "charset-normalizer",
+      "typing-extensions",
+      "packaging",
+      "pydantic",
+      "matplotlib",
+      "scipy",
+      "pillow",
+      "pytest",
+      "jinja2",
+      "sqlalchemy",
+      "beautifulsoup4",
+      "tensorflow",
+      "torch"
     ],
     "npm": [
-      "lodahs",
-      "axois",
-      "reacr",
-      "expresss"
+      "lodash",
+      "axios",
+      "react",
+      "react-dom",
+      "preact",
+      "express",
+      "chalk",
+      "commander",
+      "moment",
+      "request",
+      "webpack",
+      "typescript",
+      "jquery",
+      "dotenv",
+      "cross-env",
+      "eslint",
+      "prettier",
+      "nodemon",
+      "mongoose",
+      "socket.io",
+      "body-parser",
+      "node-fetch"
+    ],
+    "cargo": [
+      "serde",
+      "serde_json",
+      "tokio",
+      "rand",
+      "regex",
+      "rust_decimal",
+      "reqwest",
+      "clap",
+      "anyhow",
+      "thiserror"
     ]
   },
-
+  "typosquat_allowlist": {
+    "pypi": [
+      "scapy",
+      "boto"
+    ],
+    "npm": [],
+    "cargo": []
+  },
+  "typosquat_min_length": 5,
   "approved_maven_groups": [
     "org.apache",
     "org.springframework",
@@ -63,7 +143,6 @@
     "org.eclipse",
     "jakarta"
   ],
-
   "approved_go_prefixes": [
     "github.com/",
     "golang.org/",
@@ -71,18 +150,9 @@
     "go.uber.org/",
     "gopkg.in/"
   ],
-
-  "known_exploited_cves": [
-    "CVE-2021-44228",
-    "CVE-2021-45046",
-    "CVE-2023-44487",
-    "CVE-2024-3094",
-    "CVE-2023-38545",
-    "CVE-2023-32681",
-    "CVE-2022-42889"
-  ],
-
+  "known_exploited_cves": [],
+  "critical_cvss": 9.0,
   "max_total_vulnerabilities": 15,
-
+  "vulnerability_waivers": {},
   "require_clean_scan": false
 }
