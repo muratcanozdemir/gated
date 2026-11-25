@@ -13,7 +13,9 @@
     "BSL-1.0",
     "Zlib",
     "PostgreSQL",
-    "Python-2.0"
+    "Python-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016"
   ],
   "blocked_licenses": [
     "AGPL-3.0-only",

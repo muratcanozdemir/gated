@@ -17,6 +17,12 @@ test_license_ids_case_insensitive if {
 	count(gate.deny) == 0 with input as lic_input(["apache-2.0", "mit"])
 }
 
+# unicode-ident, under nearly every Rust proc-macro: its exact expression.
+test_unicode_ident_allowed if {
+	count(gate.deny) == 0 with input as lic_input(["(MIT OR Apache-2.0) AND Unicode-3.0"])
+	count(gate.deny) == 0 with input as lic_input(["(MIT OR Apache-2.0) AND Unicode-DFS-2016"])
+}
+
 test_blocked_license_denied if {
 	gate.deny == {"blocked license: AGPL-3.0-only (package: somepkg@1.0.0)"} with input as lic_input(["AGPL-3.0-only"])
 }
