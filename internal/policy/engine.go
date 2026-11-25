@@ -48,7 +48,7 @@ func (e *Engine) Evaluate(inputJSON []byte) (*Verdict, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var input interface{}
+	var input any
 	if err := json.Unmarshal(inputJSON, &input); err != nil {
 		return nil, fmt.Errorf("parse input: %w", err)
 	}
@@ -165,9 +165,9 @@ func (e *Engine) configWarnings(ctx context.Context, loadPaths []string) []strin
 
 // extractReasons handles OPA's set output format.
 // data.gate.deny returns a set of strings (reasons).
-func extractReasons(v interface{}) ([]string, bool) {
+func extractReasons(v any) ([]string, bool) {
 	switch val := v.(type) {
-	case []interface{}:
+	case []any:
 		var reasons []string
 		for _, item := range val {
 			if s, ok := item.(string); ok {
@@ -175,7 +175,7 @@ func extractReasons(v interface{}) ([]string, bool) {
 			}
 		}
 		return reasons, true
-	case map[string]interface{}:
+	case map[string]any:
 		// OPA sometimes returns sets as objects.
 		var reasons []string
 		for k := range val {

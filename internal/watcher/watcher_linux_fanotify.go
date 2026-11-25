@@ -82,7 +82,8 @@ func newFanotifyWatcher(wcfg Config) (Watcher, error) {
 	for _, wp := range wcfg.Paths {
 		if _, err := os.Stat(wp.Path); os.IsNotExist(err) {
 			slog.Warn("watch path does not exist, creating", "path", wp.Path)
-			if mkErr := os.MkdirAll(wp.Path, 0o755); mkErr != nil {
+			// Package manager caches are read by the users who install packages.
+			if mkErr := os.MkdirAll(wp.Path, 0o755); mkErr != nil { //nolint:gosec // G301: see above
 				slog.Error("failed to create watch path", "path", wp.Path, "err", mkErr)
 				continue
 			}

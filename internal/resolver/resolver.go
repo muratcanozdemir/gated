@@ -53,8 +53,8 @@ func resolvePyPI(path string) *Package {
 		}
 	}
 
-	if strings.HasSuffix(base, ".tar.gz") {
-		trimmed := strings.TrimSuffix(base, ".tar.gz")
+	if before, ok := strings.CutSuffix(base, ".tar.gz"); ok {
+		trimmed := before
 		if idx := strings.LastIndex(trimmed, "-"); idx > 0 {
 			return &Package{
 				Ecosystem: "pypi",
@@ -89,11 +89,11 @@ func resolveGo(path string) *Package {
 
 	// Everything between cache/download/ and /@v/ is the module path.
 	modCacheDir := filepath.Dir(dir)
-	idx := strings.Index(modCacheDir, "cache/download/")
-	if idx < 0 {
+	_, after, ok := strings.Cut(modCacheDir, "cache/download/")
+	if !ok {
 		return nil
 	}
-	modulePath := modCacheDir[idx+len("cache/download/"):]
+	modulePath := after
 
 	// Version is the filename without extension.
 	ext := filepath.Ext(base)
@@ -154,8 +154,8 @@ func resolveMaven(path string) *Package {
 func resolveCargo(path string) *Package {
 	base := filepath.Base(path)
 
-	if strings.HasSuffix(base, ".crate") {
-		trimmed := strings.TrimSuffix(base, ".crate")
+	if before, ok := strings.CutSuffix(base, ".crate"); ok {
+		trimmed := before
 		if idx := strings.LastIndex(trimmed, "-"); idx > 0 {
 			return &Package{
 				Ecosystem: "cargo",
@@ -177,8 +177,8 @@ func resolveNPM(path string) *Package {
 
 	// npm tarballs in some cache layouts:
 	// ~/.npm/_cacache/tmp/{hash}/{name}-{version}.tgz
-	if strings.HasSuffix(base, ".tgz") {
-		trimmed := strings.TrimSuffix(base, ".tgz")
+	if before, ok := strings.CutSuffix(base, ".tgz"); ok {
+		trimmed := before
 		if idx := strings.LastIndex(trimmed, "-"); idx > 0 {
 			return &Package{
 				Ecosystem: "npm",

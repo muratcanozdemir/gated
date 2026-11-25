@@ -151,10 +151,7 @@ func TestNewCacheLoadsFromDisk(t *testing.T) {
 
 	// Store persists asynchronously — poll briefly for the file to land.
 	deadline := time.Now().Add(time.Second)
-	for {
-		if c1.Lookup("/cache/persisted.whl") != nil {
-			break
-		}
+	for c1.Lookup("/cache/persisted.whl") == nil {
 		if time.Now().After(deadline) {
 			t.Fatal("entry never became visible")
 		}

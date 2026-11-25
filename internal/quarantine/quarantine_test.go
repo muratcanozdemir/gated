@@ -15,7 +15,7 @@ func TestHandleNewArtifact_Allow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alwaysAllow := func(path, ecosystem string, pid int32) bool {
+	alwaysAllow := func(_, _ string, _ int32) bool {
 		return true
 	}
 
@@ -35,7 +35,7 @@ func TestHandleNewArtifact_Deny(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alwaysDeny := func(path, ecosystem string, pid int32) bool {
+	alwaysDeny := func(_, _ string, _ int32) bool {
 		return false
 	}
 
@@ -55,7 +55,7 @@ func TestHandleNewArtifact_WarnOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alwaysDeny := func(path, ecosystem string, pid int32) bool {
+	alwaysDeny := func(_, _ string, _ int32) bool {
 		return false
 	}
 
@@ -76,7 +76,7 @@ func TestHandleNewArtifact_Deduplication(t *testing.T) {
 	}
 
 	var callCount atomic.Int32
-	counter := func(path, ecosystem string, pid int32) bool {
+	counter := func(_, _ string, _ int32) bool {
 		callCount.Add(1)
 		time.Sleep(10 * time.Millisecond) // simulate scan
 		return true

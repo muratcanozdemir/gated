@@ -30,7 +30,7 @@ func newTestEngine(t *testing.T) *Engine {
 	return e
 }
 
-func evalInput(t *testing.T, v map[string]interface{}) []byte {
+func evalInput(t *testing.T, v map[string]any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -41,15 +41,15 @@ func evalInput(t *testing.T, v map[string]interface{}) []byte {
 
 func TestEvaluate_Allow(t *testing.T) {
 	e := newTestEngine(t)
-	input := evalInput(t, map[string]interface{}{
-		"package": map[string]interface{}{
+	input := evalInput(t, map[string]any{
+		"package": map[string]any{
 			"ecosystem": "pypi",
 			"name":      "requests",
 			"version":   "2.31.0",
 		},
 		"licenses":        []string{"Apache-2.0"},
-		"vulnerabilities": []interface{}{},
-		"errors":          []interface{}{},
+		"vulnerabilities": []any{},
+		"errors":          []any{},
 	})
 
 	v, err := e.Evaluate(input)
@@ -63,15 +63,15 @@ func TestEvaluate_Allow(t *testing.T) {
 
 func TestEvaluate_DenyBlockedLicense(t *testing.T) {
 	e := newTestEngine(t)
-	input := evalInput(t, map[string]interface{}{
-		"package": map[string]interface{}{
+	input := evalInput(t, map[string]any{
+		"package": map[string]any{
 			"ecosystem": "pypi",
 			"name":      "some-agpl-pkg",
 			"version":   "1.0.0",
 		},
 		"licenses":        []string{"AGPL-3.0-only"},
-		"vulnerabilities": []interface{}{},
-		"errors":          []interface{}{},
+		"vulnerabilities": []any{},
+		"errors":          []any{},
 	})
 
 	v, err := e.Evaluate(input)
@@ -88,17 +88,17 @@ func TestEvaluate_DenyBlockedLicense(t *testing.T) {
 
 func TestEvaluate_DenyCriticalVulnerability(t *testing.T) {
 	e := newTestEngine(t)
-	input := evalInput(t, map[string]interface{}{
-		"package": map[string]interface{}{
+	input := evalInput(t, map[string]any{
+		"package": map[string]any{
 			"ecosystem": "pypi",
 			"name":      "some-pkg",
 			"version":   "1.0.0",
 		},
 		"licenses": []string{"MIT"},
-		"vulnerabilities": []map[string]interface{}{
+		"vulnerabilities": []map[string]any{
 			{"id": "CVE-2024-0001", "severity": "critical", "cvss": 9.8, "source": "grype"},
 		},
-		"errors": []interface{}{},
+		"errors": []any{},
 	})
 
 	v, err := e.Evaluate(input)
@@ -112,15 +112,15 @@ func TestEvaluate_DenyCriticalVulnerability(t *testing.T) {
 
 func TestEvaluate_DenyBlocklistedPackage(t *testing.T) {
 	e := newTestEngine(t)
-	input := evalInput(t, map[string]interface{}{
-		"package": map[string]interface{}{
+	input := evalInput(t, map[string]any{
+		"package": map[string]any{
 			"ecosystem": "pypi",
 			"name":      "jeIlyfish",
 			"version":   "1.0.0",
 		},
 		"licenses":        []string{"MIT"},
-		"vulnerabilities": []interface{}{},
-		"errors":          []interface{}{},
+		"vulnerabilities": []any{},
+		"errors":          []any{},
 	})
 
 	v, err := e.Evaluate(input)
@@ -163,11 +163,11 @@ this is not valid rego
 		t.Fatal("expected ValidatePolicies to fail on invalid rego")
 	}
 
-	input := evalInput(t, map[string]interface{}{
-		"package":         map[string]interface{}{"ecosystem": "pypi", "name": "bad-pkg", "version": "1.0.0"},
+	input := evalInput(t, map[string]any{
+		"package":         map[string]any{"ecosystem": "pypi", "name": "bad-pkg", "version": "1.0.0"},
 		"licenses":        []string{"MIT"},
-		"vulnerabilities": []interface{}{},
-		"errors":          []interface{}{},
+		"vulnerabilities": []any{},
+		"errors":          []any{},
 	})
 	v, err := e.Evaluate(input)
 	if err != nil {
@@ -270,10 +270,10 @@ func TestPolicies_WithoutDataJSON(t *testing.T) {
 		t.Fatalf("ValidatePolicies: %v", err)
 	}
 
-	input := evalInput(t, map[string]interface{}{
-		"package":  map[string]interface{}{"ecosystem": "pypi", "name": "somepkg", "version": "1.0.0"},
+	input := evalInput(t, map[string]any{
+		"package":  map[string]any{"ecosystem": "pypi", "name": "somepkg", "version": "1.0.0"},
 		"licenses": []string{"MIT"},
-		"vulnerabilities": []map[string]interface{}{
+		"vulnerabilities": []map[string]any{
 			{"id": "CVE-2024-0001", "severity": "unknown", "cvss": 9.8, "source": "osv"},
 		},
 	})
