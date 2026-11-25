@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.0](https://github.com/muratcanozdemir/gated/compare/v0.2.0...v1.0.0) (2026-11-25)
+
+
+### Features
+
+* **quarantine:** race package managers that unpack downloads at once (go, uv), and warn them in their own output when gated loses ([1567011](https://github.com/muratcanozdemir/gated/commit/1567011a8119571fa29df166fc99a89647543b58))
+* **scanner:** scan what is inside packages and look them up by package URL ([#22](https://github.com/muratcanozdemir/gated/issues/22)) ([41d67c3](https://github.com/muratcanozdemir/gated/commit/41d67c320654cd29b1389261538233f1ee5f07b0))
+
+
+### Bug Fixes
+
+* **policy:** approve the Unicode license (Unicode-3.0, Unicode-DFS-2016), which nearly every Rust build needs ([1567011](https://github.com/muratcanozdemir/gated/commit/1567011a8119571fa29df166fc99a89647543b58))
+* quarantine mode never scanned or gated real package downloads ([#21](https://github.com/muratcanozdemir/gated/issues/21)) ([a15baf6](https://github.com/muratcanozdemir/gated/commit/a15baf6a3b2f1255412d40f064008f5fa98d7b32))
+* **quarantine:** a download retried at the path of a denied one was allowed as a duplicate ([1567011](https://github.com/muratcanozdemir/gated/commit/1567011a8119571fa29df166fc99a89647543b58))
+* **scanner:** stop denying clean packages over how their license is written; look up scoped npm packages by their real name ([1567011](https://github.com/muratcanozdemir/gated/commit/1567011a8119571fa29df166fc99a89647543b58))
+* **watcher:** stop logging "bad file descriptor" when inotify shuts down ([1567011](https://github.com/muratcanozdemir/gated/commit/1567011a8119571fa29df166fc99a89647543b58))
+
 ## [0.2.0](https://github.com/muratcanozdemir/gated/compare/v0.1.0...v0.2.0) (2026-11-25)
 
 
