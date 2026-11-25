@@ -230,7 +230,7 @@ func runOSV(ctx context.Context, bin string, pkg *resolver.Package) ([]Vulnerabi
 		// not a failure; anything else (including context deadlines) is
 		// a genuine error.
 		var exitErr *exec.ExitError
-		if !(errors.As(err, &exitErr) && exitErr.ExitCode() == 1) {
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 			return nil, fmt.Errorf("%w: %s", err, stderr.String())
 		}
 	}

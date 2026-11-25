@@ -28,7 +28,7 @@ GORELEASER := $(GO) run github.com/goreleaser/goreleaser/v2@v2.20.3
 .PHONY: build test vet lint fmt install install-config install-tools validate \
         clean build-all build-linux build-darwin build-windows check tidy \
         install-systemd install-systemd-unprivileged \
-        policy-test policy-fmt snapshot release-check
+        policy-test policy-fmt snapshot release-check fix
 
 ## Build
 
@@ -63,8 +63,15 @@ fmt:
 		echo "gofmt needed on:"; echo "$$unformatted"; exit 1; \
 	fi
 
-lint: vet
-	@command -v staticcheck >/dev/null 2>&1 && staticcheck ./... || echo "staticcheck not installed, skipping"
+# golangci-lint (pinned; config in .golangci.yml): staticcheck, gosec,
+# errorlint, revive and more, plus the analyzers `go fix` applies (modernize).
+# Keep the version in sync with .github/workflows/ci.yml.
+lint:
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+
+# Apply go fix: what the modernize linter enforces.
+fix:
+	$(GO) fix ./...
 
 tidy:
 	$(GO) mod tidy
@@ -120,7 +127,7 @@ install-tools:
 validate: build
 	./$(BINARY) -config configs/config.example.yaml -validate
 
-check: build validate vet fmt test policy-test
+check: build validate vet fmt lint test policy-test
 	@echo "All checks passed."
 
 ## Release (GoReleaser; tags and changelog come from release-please)

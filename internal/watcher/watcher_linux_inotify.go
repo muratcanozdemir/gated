@@ -69,7 +69,8 @@ func newInotifyQuarantineWatcher(wcfg Config) (Watcher, error) {
 	for _, wp := range wcfg.Paths {
 		if _, err := os.Stat(wp.Path); os.IsNotExist(err) {
 			slog.Warn("watch path does not exist, creating", "path", wp.Path)
-			if mkErr := os.MkdirAll(wp.Path, 0o755); mkErr != nil {
+			// Package manager caches are read by the users who install packages.
+			if mkErr := os.MkdirAll(wp.Path, 0o755); mkErr != nil { //nolint:gosec // G301: see above
 				slog.Error("failed to create watch path", "path", wp.Path, "err", mkErr)
 				continue
 			}
@@ -157,7 +158,9 @@ func (w *InotifyQuarantineWatcher) Run() error {
 
 	go func() {
 		<-w.done
-		cancelW.Write([]byte{0})
+		if _, err := cancelW.Write([]byte{0}); err != nil {
+			slog.Error("inotify watcher: wake event loop for shutdown", "err", err)
+		}
 	}()
 
 	epfd, err := unix.EpollCreate1(unix.EPOLL_CLOEXEC)
@@ -196,7 +199,7 @@ func (w *InotifyQuarantineWatcher) Run() error {
 			return fmt.Errorf("epoll_wait: %w", err)
 		}
 
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if events[i].Fd == int32(cancelR.Fd()) {
 				slog.Info("inotify watcher shutting down")
 				return nil
@@ -327,7 +330,9 @@ func (w *InotifyQuarantineWatcher) Close() error {
 	// Remove all watches.
 	w.mu.RLock()
 	for wd := range w.watches {
-		unix.InotifyRmWatch(w.fd, uint32(wd))
+		// EINVAL when the kernel already dropped the watch (its directory
+		// was deleted); closing the fd below releases the rest anyway.
+		_, _ = unix.InotifyRmWatch(w.fd, uint32(wd))
 	}
 	w.mu.RUnlock()
 

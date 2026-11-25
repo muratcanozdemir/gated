@@ -80,7 +80,7 @@ func main() {
 	warnIfMissing(cfg.Tools)
 
 	// The decision function wired into the fanotify event loop.
-	decisionFn := func(path, ecosystem string, pid int32) bool {
+	decisionFn := func(path, ecosystem string, _ int32) bool {
 		// Fast path: check cache.
 		if entry := cache.Lookup(path); entry != nil {
 			return entry.Allowed

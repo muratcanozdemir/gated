@@ -1,0 +1,40 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    # The analyzers `go fix` applies (Go 1.26+): code must already be in the
+    # form `go fix` would leave it. Fix with `make fix`.
+    - modernize
+    - noctx
+    - revive
+    - unconvert
+  settings:
+    modernize:
+      disable: [] # every analyzer, as go fix runs them
+    gosec:
+      excludes:
+        - G104 # unchecked errors: errcheck covers these, with the std-error-handling preset
+        - G304 # the daemon reads the config and policy files the operator names, and the artifacts it gates
+  exclusions:
+    generated: strict
+    presets: [comments, std-error-handling]
+    rules:
+      # The scanners are the binaries named in the operator's config; they
+      # run without a shell, the artifact path as a plain argument.
+      - path: internal/scanner/tools\.go
+        linters: [gosec]
+        text: G204
+      # fanotify/inotify: raw kernel event structs and fds. Conversions follow
+      # the kernel ABI (fds and wds are int32 there), unsafe builds the
+      # response struct, and every index is bounds-checked against the read
+      # length first, which G602 cannot follow.
+      - path: internal/watcher/watcher_linux_(fanotify|inotify)\.go
+        linters: [gosec]
+        text: "G103|G115|G602"
+      # Test fixtures and temp dirs, not production code paths.
+      - path: _test\.go
+        linters: [gosec]
