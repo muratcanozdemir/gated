@@ -44,6 +44,46 @@ On Linux with `watcher_mode: auto` (default), gated probes for fanotify capabili
 at startup and falls back to inotify+quarantine transparently. Same binary, same
 policies, same scans.
 
+### Racing the package manager (quarantine mode)
+
+In quarantine mode gated learns of a download only after it lands, so it races
+the package manager. Usually it wins: the file is moved aside before anything
+reads it. Some package managers cannot lose an artifact, though, so gated judges
+it **in place** instead: it scans it where it lies and never holds it.
+
+| Package manager | Gated in place | On a deny, gated removes |
+|---|---|---|
+| go | the module zip in `cache/download` (go unpacks it at once) | the zip, its `.ziphash` and the unpacked module |
+| uv | the unpacked wheel in `archive-v0/<id>/` (uv never writes a `.whl`) | that directory |
+
+Removing these means the next install fetches the package again, and gated
+denies it from its verdict cache before anything unpacks it. A retried `go mod
+download` of a denied module fails. What the package manager already did with
+the package in the first run is out of gated's reach: uv has installed it, go may
+have built with it. The same goes for a held file that the package manager had
+already opened.
+
+When gated loses like this, it says so **in the package manager's own output**,
+where the person or CI job running it will see it:
+
+```
+$ uv pip install urllib3==1.26.4
+ + urllib3==1.26.4
+
+gated: urllib3@1.26.4 DENIED
+gated:   - fixable high-severity vulnerability GHSA-v845-jxx5-vc9f in urllib3@1.26.4 — upgrade to 1.26.17
+gated: uv (pid 4242) unpacked it before gated could stop it. gated removed it from the cache, but whatever this run built or installed from it stays: remove that, then rerun.
+```
+
+gated finds the package manager as the process that has files open in the cache
+when the package arrives, or just before. Fast installers can be done within
+milliseconds, so gated looks for one as soon as anything changes in the cache. It
+opens that process's stderr (`/proc/<pid>/fd/2`, append-only), so the warning
+gets through even after the process has exited. This works on Linux for processes
+gated may inspect: your own (user service) or anyone's (as root). Elsewhere the
+lost race appears in gated's log only. In `warn_only` mode the same message says
+the package *would be* denied.
+
 ## Quick start
 
 ### Developer workstation (no root)
@@ -157,11 +197,11 @@ watch_paths:
 
 | Ecosystem | Cache artifacts resolved | PURL format |
 |-----------|------------------------|-------------|
-| PyPI | `.whl`, `.tar.gz` | `pkg:pypi/name@version` |
-| Go | `@v/*.zip`, `@v/*.mod` | `pkg:golang/module@version` |
+| PyPI | `.whl`, `.tar.gz`; uv's `archive-v0/<id>/`, gated in place | `pkg:pypi/name@version` |
+| Go | `@v/*.zip`, gated in place | `pkg:golang/module@version` |
 | Maven | `*.jar` | `pkg:maven/group/artifact@version` |
 | Cargo | `*.crate` | `pkg:cargo/name@version` |
-| npm | `*.tgz` (best-effort) | `pkg:npm/name@version` |
+| npm | `*.tgz` (best-effort; scoped names read from the tarball's `package.json`) | `pkg:npm/name@version` |
 
 npm's content-addressed cache (`_cacache`) makes path-based resolution unreliable.
 For full npm coverage, watch `node_modules/` instead.
@@ -312,7 +352,8 @@ internal/
 │   ├── watcher_linux_inotify.go  Unprivileged inotify + quarantine
 │   ├── watcher_darwin.go         FSEvents + quarantine (CGo)
 │   └── watcher_windows.go        Stub (three strategies documented)
-├── quarantine/             Atomic rename gating (cross-platform)
+├── quarantine/             Atomic rename gating, in-place gating (cross-platform)
+├── installer/              Finds the package manager behind an artifact, to warn it
 ├── resolver/               Path → (ecosystem, name, version) mapping
 ├── scanner/                Unpacks artifacts, orchestrates syft and grype
 ├── policy/                 OPA evaluation engine
@@ -326,8 +367,10 @@ without modifying the target process. eBPF `cgroup/connect4` can intercept
 connections but can't block-and-resume a file open.
 
 **Quarantine as universal fallback.** Atomic rename works on every OS and needs no
-privileges. The race window (file exists briefly before quarantine) is academic
-for package managers — they always close a download before opening for extraction.
+privileges. The race window (file exists briefly before quarantine) rarely matters
+for package managers that close a download before opening it for extraction. Those
+that unpack at once (go, uv) are gated in place, and told when gated was too late
+(see [Racing the package manager](#racing-the-package-manager-quarantine-mode)).
 
 **Fail open on errors.** If a scan tool crashes or OPA eval fails, the artifact is
 allowed. Logged and recorded in the verdict cache for audit. The daemon never
@@ -360,9 +403,14 @@ How an artifact is scanned:
   looks the package up by its package URL, e.g. `pkg:pypi/pyyaml@5.3.1`
   (catching what the bytes miss, such as sdists). The results are merged.
 - Licenses come from syft, as SPDX IDs where syft can tell (syft 1.2x or
-  newer maps Maven license URLs). For Python packages without one, gated
-  reads the core metadata (`License-Expression`, or a `License` field that is
-  an identifier).
+  newer maps Maven license URLs), with its npm cataloger for unpacked npm
+  tarballs switched on. gated then cleans them up: quotes are dropped, the
+  common license URLs that syft leaves as-is (opensource.org, apache.org,
+  eclipse.org, gnu.org) become SPDX IDs, and `sha256:...` values (license text
+  syft could not identify) are dropped. Where syft finds none, gated reads the
+  package's own metadata: for Python, `License-Expression` or a `License` field
+  that is an identifier; for crates, `license` in `Cargo.toml` (the legacy
+  `MIT/Apache-2.0` reads as `MIT OR Apache-2.0`).
 
 `tools.osv_scanner` is no longer used: grype's database covers the same
 advisories. Older configs that set it still load, with a warning.

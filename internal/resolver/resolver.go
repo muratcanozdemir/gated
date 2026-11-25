@@ -101,8 +101,8 @@ func resolveGo(path string) *Package {
 
 	return &Package{
 		Ecosystem: "go",
-		Name:      modulePath,
-		Version:   version,
+		Name:      unescapeGoPath(modulePath),
+		Version:   unescapeGoPath(version),
 		Path:      path,
 	}
 }

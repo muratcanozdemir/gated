@@ -37,4 +37,7 @@ type Config struct {
 	DecisionFn  DecisionFunc
 	WarnOnly    bool
 	WatcherMode Mode
+	// Explain names the package judged at a path and the reasons it was
+	// denied, for warnings written to package managers (optional).
+	Explain func(path string) (pkg string, reasons []string)
 }

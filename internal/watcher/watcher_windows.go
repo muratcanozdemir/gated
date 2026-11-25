@@ -52,7 +52,7 @@ func New(wcfg Config) (Watcher, error) {
 		"platform", runtime.GOOS,
 	)
 
-	_ = quarantine.NewEngine(wcfg.DecisionFn, wcfg.WarnOnly)
+	_ = newEngine(wcfg)
 
 	return nil, fmt.Errorf(
 		"gated on Windows is not yet implemented; " +

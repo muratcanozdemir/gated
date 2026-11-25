@@ -110,3 +110,54 @@ func TestInotify_DirMovedIn(t *testing.T) {
 	}
 	expectGated(t, gated, "serde-1.0.0.crate")
 }
+
+// uv unpacks a download into its cache and renames the directory into
+// archive-v0: the directory is the artifact, gated in place (not held), and
+// what is inside it is not gated file by file.
+func TestInotify_UVArchiveGatedInPlace(t *testing.T) {
+	root := t.TempDir()
+	archive := filepath.Join(root, "archive-v0")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gated := startInotify(t, root, "pypi")
+
+	tmp := filepath.Join(root, ".tmpAbC")
+	info := filepath.Join(tmp, "urllib3-1.26.4.dist-info")
+	if err := os.MkdirAll(filepath.Join(tmp, "urllib3", "contrib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(info, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(info, "METADATA"), []byte("Metadata-Version: 2.1\nName: urllib3\nVersion: 1.26.4\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeArtifact(t, filepath.Join(tmp, "urllib3", "contrib", "fixture.gz")) // part of the package
+	if err := os.Rename(tmp, filepath.Join(archive, "Xy12")); err != nil {
+		t.Fatal(err)
+	}
+	expectGated(t, gated, "Xy12") // the directory, where it lies
+	select {
+	case got := <-gated:
+		t.Fatalf("also gated %s: content of an unpacked package is not an artifact", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// go writes the module zip and unpacks it at once: the zip is gated where it
+// lies, not held, or go fails to unpack it even when it is allowed.
+func TestInotify_GoZipGatedInPlace(t *testing.T) {
+	root := t.TempDir()
+	gated := startInotify(t, root, "go")
+	v := filepath.Join(root, "cache", "download", "github.com", "google", "uuid", "@v")
+	if err := os.MkdirAll(v, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	zip := filepath.Join(v, "v1.6.0.zip")
+	writeArtifact(t, zip)
+	expectGated(t, gated, "v1.6.0.zip")
+	if _, err := os.Stat(zip); err != nil {
+		t.Fatalf("an allowed module zip must stay where go wrote it: %v", err)
+	}
+}

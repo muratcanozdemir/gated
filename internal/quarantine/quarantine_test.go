@@ -120,8 +120,8 @@ func TestPruneSeen(t *testing.T) {
 
 	// Inject old entries.
 	engine.mu.Lock()
-	engine.seen["/old/path"] = time.Now().Add(-2 * time.Hour)
-	engine.seen["/new/path"] = time.Now()
+	engine.seen["/old/path"] = seenEntry{at: time.Now().Add(-2 * time.Hour)}
+	engine.seen["/new/path"] = seenEntry{at: time.Now()}
 	engine.mu.Unlock()
 
 	pruned := engine.PruneSeen(1 * time.Hour)
@@ -184,6 +184,109 @@ func TestHoldPathResolvesThroughOriginalPath(t *testing.T) {
 		pkg := resolver.Resolve(orig, c.eco)
 		if pkg == nil || pkg.Name != c.name || pkg.Version != c.version {
 			t.Errorf("%s: Resolve(OriginalPath(hold)) = %+v, want %s %s", name, pkg, c.name, c.version)
+		}
+	}
+}
+
+// A package manager retries a denied download at the same path: the retry
+// is a new file, and must be gated again, not skipped as a duplicate.
+func TestHandleNewArtifact_RetryAfterDenyIsGated(t *testing.T) {
+	dir := t.TempDir()
+	artifact := filepath.Join(dir, "log4j-core-2.14.1.jar")
+	var calls atomic.Int32
+	engine := NewEngine(func(_, _ string, _ int32) bool { calls.Add(1); return false }, false)
+
+	for i := 1; i <= 2; i++ {
+		if err := os.WriteFile(artifact, []byte("jar"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		engine.HandleNewArtifact(artifact, "maven")
+		if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+			t.Fatalf("attempt %d: denied artifact still at its path", i)
+		}
+		if got := calls.Load(); got != int32(i) {
+			t.Fatalf("attempt %d: decided %d times, want %d", i, got, i)
+		}
+	}
+}
+
+// An allowed file replaced by a different one at the same path is gated again.
+func TestHandleNewArtifact_ReplacedAfterAllowIsGated(t *testing.T) {
+	dir := t.TempDir()
+	artifact := filepath.Join(dir, "x-1.0.jar")
+	var calls atomic.Int32
+	engine := NewEngine(func(_, _ string, _ int32) bool { calls.Add(1); return true }, false)
+	if err := os.WriteFile(artifact, []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	engine.HandleNewArtifact(artifact, "maven")
+	engine.HandleNewArtifact(artifact, "maven") // our own release: a duplicate
+	tmp := artifact + ".part"
+	if err := os.WriteFile(tmp, []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, artifact); err != nil {
+		t.Fatal(err)
+	}
+	engine.HandleNewArtifact(artifact, "maven")
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("decided %d times, want 2 (once per distinct file)", got)
+	}
+}
+
+// goModule lays out a module cache entry: the zip, its hash and the
+// unpacked module, read-only as go leaves it.
+func goModule(t *testing.T) (root string, ip *resolver.InPlace) {
+	t.Helper()
+	root = t.TempDir()
+	v := filepath.Join(root, "cache", "download", "golang.org", "x", "text", "@v")
+	mod := filepath.Join(root, "golang.org", "x", "text@v0.3.5")
+	for _, d := range []string{v, filepath.Join(mod, "unicode")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{filepath.Join(v, "v0.3.5.zip"), filepath.Join(v, "v0.3.5.ziphash"), filepath.Join(mod, "unicode", "x.go")} {
+		if err := os.WriteFile(f, []byte("x"), 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, d := range []string{filepath.Join(mod, "unicode"), mod} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _ = removeAll(root) })
+	ip = resolver.ResolveInPlace(filepath.Join(v, "v0.3.5.zip"), "go")
+	if ip == nil {
+		t.Fatal("module zip not resolved as in place")
+	}
+	return root, ip
+}
+
+func TestHandleInPlace_DenyRemovesWhatGoUnpacked(t *testing.T) {
+	_, ip := goModule(t)
+	engine := NewEngine(func(_, _ string, _ int32) bool { return false }, false)
+	engine.HandleInPlace(ip, "go")
+	for _, p := range ip.Remove {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived a deny (err=%v)", p, err)
+		}
+	}
+}
+
+func TestHandleInPlace_AllowAndWarnOnlyKeepEverything(t *testing.T) {
+	for name, tc := range map[string]struct{ allow, warnOnly bool }{
+		"allowed":   {true, false},
+		"warn-only": {false, true},
+	} {
+		_, ip := goModule(t)
+		engine := NewEngine(func(_, _ string, _ int32) bool { return tc.allow }, tc.warnOnly)
+		engine.HandleInPlace(ip, "go")
+		for _, p := range ip.Remove {
+			if _, err := os.Lstat(p); err != nil {
+				t.Errorf("%s: %s removed: %v", name, p, err)
+			}
 		}
 	}
 }

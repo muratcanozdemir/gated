@@ -15,6 +15,7 @@ import (
 
 	"github.com/muratcanozdemir/gated/internal/config"
 	"github.com/muratcanozdemir/gated/internal/quarantine"
+	"github.com/muratcanozdemir/gated/internal/resolver"
 )
 
 // InotifyQuarantineWatcher uses inotify for file notifications and the
@@ -56,7 +57,7 @@ func newInotifyQuarantineWatcher(wcfg Config) (Watcher, error) {
 		return nil, fmt.Errorf("inotify_init1: %w", err)
 	}
 
-	qEngine := quarantine.NewEngine(wcfg.DecisionFn, wcfg.WarnOnly)
+	qEngine := newEngine(wcfg)
 
 	w := &InotifyQuarantineWatcher{
 		fd:       fd,
@@ -107,8 +108,9 @@ func (w *InotifyQuarantineWatcher) addWatchRecursive(root, ecosystem string) (in
 			return nil
 		}
 
-		// Skip quarantine directories.
-		if quarantine.IsQuarantinePath(path) {
+		// Skip quarantine directories, and packages unpacked into a cache:
+		// they are judged whole (resolver.InPlace), not file by file.
+		if quarantine.IsQuarantinePath(path) || resolver.IsUnpackedContent(path, ecosystem) {
 			return filepath.SkipDir
 		}
 
@@ -287,6 +289,12 @@ func (w *InotifyQuarantineWatcher) handleInotifyEvent(wd int, mask uint32, name 
 
 	fullPath := filepath.Join(entry.dir, name)
 
+	// Any change in a cache whose packages are gated in place: note who is
+	// working there, before a fast package manager is done and gone.
+	if root := resolver.CacheRoot(fullPath, entry.ecosystem); root != "" {
+		go w.qEngine.NoteActivity(root)
+	}
+
 	// New directory, created here or moved in: watch it and everything
 	// below it. inotify watches are not recursive, and a package manager
 	// creates nested directories in one go (mkdir -p) and writes into the
@@ -297,6 +305,10 @@ func (w *InotifyQuarantineWatcher) handleInotifyEvent(wd int, mask uint32, name 
 	// gated once (the quarantine engine drops duplicates).
 	if mask&unix.IN_ISDIR != 0 {
 		if mask&(unix.IN_CREATE|unix.IN_MOVED_TO) == 0 || quarantine.IsQuarantinePath(fullPath) {
+			return
+		}
+		// A package unpacked into the cache (uv renames it into place).
+		if w.gate(fullPath, entry.ecosystem, maskStr(mask)) {
 			return
 		}
 		n, err := w.addWatchRecursive(fullPath, entry.ecosystem)
@@ -315,15 +327,14 @@ func (w *InotifyQuarantineWatcher) handleInotifyEvent(wd int, mask uint32, name 
 	w.gate(fullPath, entry.ecosystem, maskStr(mask))
 }
 
-// gate hands an artifact to the quarantine engine (rename, scan, release or
-// deny), skipping quarantine files, metadata and non-artifacts. It runs async
-// so the inotify event loop isn't blocked.
-func (w *InotifyQuarantineWatcher) gate(path, ecosystem, event string) {
-	if quarantine.IsQuarantinePath(path) || isMetadataFile(path) || !isArtifactFile(path) {
-		return
+// gate hands an artifact to the quarantine engine (see dispatch), skipping
+// quarantine files, metadata and non-artifacts. Returns whether it did.
+func (w *InotifyQuarantineWatcher) gate(path, ecosystem, event string) bool {
+	if !dispatch(w.qEngine, path, ecosystem) {
+		return false
 	}
 	slog.Info("detected", "path", path, "ecosystem", ecosystem, "event", event)
-	go w.qEngine.HandleNewArtifact(path, ecosystem)
+	return true
 }
 
 // gateExisting gates the artifacts already in a directory tree that appeared
@@ -335,8 +346,10 @@ func (w *InotifyQuarantineWatcher) gateExisting(root, ecosystem string) {
 		switch {
 		case err != nil:
 			return nil // vanished or unreadable: nothing to gate
-		case d.IsDir() && quarantine.IsQuarantinePath(path):
+		case d.IsDir() && (quarantine.IsQuarantinePath(path) || resolver.IsUnpackedContent(path, ecosystem)):
 			return filepath.SkipDir
+		case d.IsDir() && path != root && w.gate(path, ecosystem, "existing"):
+			return filepath.SkipDir // an unpacked package, judged whole
 		case d.Type().IsRegular():
 			w.gate(path, ecosystem, "existing")
 		}

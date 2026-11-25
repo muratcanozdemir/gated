@@ -107,6 +107,12 @@ func main() {
 		}
 		pkg := resolver.Resolve(idPath, ecosystem)
 		if pkg == nil {
+			// A package a package manager unpacked into its cache (uv).
+			if ip := resolver.ResolveInPlace(idPath, ecosystem); ip != nil {
+				pkg = ip.Pkg
+			}
+		}
+		if pkg == nil {
 			// Watchers only hand over artifact files, so this is unusual:
 			// make it visible rather than allowing silently.
 			slog.Warn("unresolvable artifact, allowing", "path", idPath, "ecosystem", ecosystem)
@@ -193,6 +199,13 @@ func main() {
 		DecisionFn:  decisionFn,
 		WarnOnly:    cfg.WarnOnly,
 		WatcherMode: watcher.Mode(cfg.WatcherMode),
+		Explain: func(path string) (string, []string) {
+			e := cache.Lookup(path)
+			if e == nil {
+				return "", nil
+			}
+			return e.Name + "@" + e.Version, e.Reasons
+		},
 	})
 	if err != nil {
 		slog.Error("watcher init failed", "err", err)

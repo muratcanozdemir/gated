@@ -86,7 +86,7 @@ type DarwinWatcher struct {
 }
 
 func New(wcfg Config) (Watcher, error) {
-	qEngine := quarantine.NewEngine(wcfg.DecisionFn, wcfg.WarnOnly)
+	qEngine := newEngine(wcfg)
 
 	w := &DarwinWatcher{
 		paths:      wcfg.Paths,
@@ -190,25 +190,16 @@ func (w *DarwinWatcher) handleFSEvent(path string, flags uint32) {
 		return
 	}
 
-	// Skip metadata files.
-	if isMetadataFile(path) {
-		return
-	}
-
 	ecosystem := resolveEcosystem(w.paths, path)
 	if ecosystem == "" {
 		return
 	}
 
-	// Only process artifact files (wheels, jars, crates, zips, tarballs).
-	if !isArtifactFile(path) {
-		return
+	// Artifacts only (wheels, jars, crates, zips, tarballs), handled in a
+	// goroutine so the callback returns fast.
+	if dispatch(w.qEngine, path, ecosystem) {
+		slog.Debug("fsevents", "path", path, "ecosystem", ecosystem, "created", created, "modified", modified)
 	}
-
-	slog.Debug("fsevents", "path", path, "ecosystem", ecosystem, "created", created, "modified", modified)
-
-	// Quarantine in a goroutine so the callback returns fast.
-	go w.qEngine.HandleNewArtifact(path, ecosystem)
 }
 
 //export goFSEventCallback

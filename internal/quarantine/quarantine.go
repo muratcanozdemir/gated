@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/muratcanozdemir/gated/internal/installer"
+	"github.com/muratcanozdemir/gated/internal/resolver"
 )
 
 const (
@@ -24,18 +27,34 @@ type Engine struct {
 	decisionFn func(path string, ecosystem string, pid int32) bool
 	warnOnly   bool
 
-	// Track files we've already processed to avoid re-quarantining
-	// on duplicate notifications.
+	// Explain, if set, names the package judged at a path and why it was
+	// denied, for the warning written to a package manager that gated could
+	// not stop (see installer).
+	Explain func(path string) (pkg string, reasons []string)
+
+	// Track what we've already processed to avoid re-quarantining on
+	// duplicate notifications, including the one our own release raises.
 	mu       sync.RWMutex
-	seen     map[string]time.Time
+	seen     map[string]seenEntry
 	inflight map[string]struct{}
+
+	// Package managers seen working in each cache, for HandleInPlace.
+	installers installerRegistry
+}
+
+// seenEntry records an artifact gated and left in place (released or
+// allowed). Only that same file is a duplicate: a new file at the same path
+// is a new download (a retry after a deny, say) and is gated again.
+type seenEntry struct {
+	at   time.Time
+	file os.FileInfo
 }
 
 func NewEngine(decisionFn func(string, string, int32) bool, warnOnly bool) *Engine {
 	return &Engine{
 		decisionFn: decisionFn,
 		warnOnly:   warnOnly,
-		seen:       make(map[string]time.Time),
+		seen:       make(map[string]seenEntry),
 		inflight:   make(map[string]struct{}),
 	}
 }
@@ -53,38 +72,11 @@ func NewEngine(decisionFn func(string, string, int32) bool, warnOnly bool) *Engi
 // then either reappear (allowed) or stay gone (denied). Most package managers
 // handle "file not found" gracefully with a retry or error.
 func (e *Engine) HandleNewArtifact(path, ecosystem string) {
-	// Deduplicate: don't re-process files we've already seen.
-	e.mu.RLock()
-	if _, ok := e.seen[path]; ok {
-		e.mu.RUnlock()
+	if !e.begin(path) {
 		return
 	}
-	if _, ok := e.inflight[path]; ok {
-		e.mu.RUnlock()
-		return
-	}
-	e.mu.RUnlock()
-
-	e.mu.Lock()
-	// Double-check after acquiring write lock.
-	if _, ok := e.inflight[path]; ok {
-		e.mu.Unlock()
-		return
-	}
-	e.inflight[path] = struct{}{}
-	e.mu.Unlock()
-
-	defer func() {
-		e.mu.Lock()
-		delete(e.inflight, path)
-		e.seen[path] = time.Now()
-		e.mu.Unlock()
-	}()
-
-	// Verify the file still exists (might have been cleaned up already).
-	if _, err := os.Stat(path); err != nil {
-		return
-	}
+	kept := false // left at path (released): our own MOVED_TO must not re-gate it
+	defer func() { e.end(path, kept) }()
 
 	holdPath := quarantinePath(path)
 
@@ -104,6 +96,11 @@ func (e *Engine) HandleNewArtifact(path, ecosystem string) {
 
 	slog.Info("quarantined", "path", path, "ecosystem", ecosystem)
 
+	// Did we lose the race? A package manager that opened the file before
+	// the rename keeps reading it through its open descriptor.
+	readers := installer.Using(holdPath)
+	defer installer.CloseAll(readers)
+
 	// Step 2: Run scans against the quarantined file.
 	// The decision function gets the hold path so it can scan the actual
 	// bytes; it resolves package identity from OriginalPath(holdPath).
@@ -119,8 +116,16 @@ func (e *Engine) HandleNewArtifact(path, ecosystem string) {
 			// Last resort: try to put it back somehow.
 			return
 		}
+		kept = true
 		slog.Info("released", "path", path)
+		if !allowed {
+			e.warnInstallers(readers, holdPath, "would be denied (warn-only mode, allowed anyway)", "")
+		}
 	} else {
+		if len(readers) > 0 {
+			e.warnInstallers(readers, holdPath, "DENIED",
+				"%s opened it before gated could hold it: gated removed it, but it may have been used already.")
+		}
 		// Denied: move to a permanent quarantine location for audit trail,
 		// or delete based on config.
 		auditPath := auditQuarantinePath(path)
@@ -140,6 +145,143 @@ func (e *Engine) HandleNewArtifact(path, ecosystem string) {
 	}
 }
 
+// begin claims path for processing; false means it is a duplicate (being
+// processed, or the very file processed and left in place).
+func (e *Engine) begin(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false // gone already: consumed, or removed on a deny
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, ok := e.inflight[path]; ok {
+		return false
+	}
+	if s, ok := e.seen[path]; ok && os.SameFile(s.file, fi) {
+		return false
+	}
+	e.inflight[path] = struct{}{}
+	return true
+}
+
+// end releases path. kept records the file now at path as processed, so the
+// event our own release raises (or a duplicate) is ignored; otherwise path
+// is forgotten, and whatever appears there next is gated.
+func (e *Engine) end(path string, kept bool) {
+	var fi os.FileInfo
+	if kept {
+		fi, _ = os.Stat(path)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.inflight, path)
+	if fi != nil {
+		e.seen[path] = seenEntry{at: time.Now(), file: fi}
+	} else {
+		delete(e.seen, path)
+	}
+}
+
+// HandleInPlace gates an artifact the package manager uses as soon as it
+// lands (resolver.InPlace): it is scanned where it lies, never held. gated
+// races the package manager here. On a deny it removes the artifact and what
+// the package manager unpacked from it, so the next install fetches it again
+// (and gated denies it before anything unpacks it, from the verdict cache),
+// and it warns the package manager processes it found when the artifact
+// appeared: whatever they did with it in the meantime stands.
+func (e *Engine) HandleInPlace(ip *resolver.InPlace, ecosystem string) {
+	path := ip.Pkg.Path
+	if !e.begin(path) {
+		return
+	}
+	kept := false
+	defer func() { e.end(path, kept) }()
+
+	// Who is installing it: found now, or already when it started working
+	// in the cache (NoteActivity); by the time the verdict is in, it may be done.
+	e.NoteActivity(ip.Root)
+	procs := e.installersOf(ip.Root)
+
+	slog.Info("gating in place", "path", path, "ecosystem", ecosystem, "installers", describe(procs))
+	if e.decisionFn(path, ecosystem, -1) {
+		kept = true
+		return
+	}
+	if e.warnOnly {
+		kept = true
+		slog.Warn("WARN_ONLY: would deny, leaving in place", "path", path)
+		e.warnInstallers(procs, path, "would be denied (warn-only mode, allowed anyway)", "")
+		return
+	}
+
+	var failed []string
+	for _, p := range ip.Remove {
+		if err := removeAll(p); err != nil {
+			failed = append(failed, p)
+			slog.Error("DENIED — failed to remove", "path", p, "err", err)
+		}
+	}
+	slog.Warn("DENIED — lost the race to the package manager, removed from its cache",
+		"path", path, "removed", ip.Remove, "installers", describe(procs))
+	if len(failed) > 0 {
+		e.warnInstallers(procs, path, "DENIED",
+			"%s unpacked it before gated could stop it, and gated could not remove it from the cache ("+strings.Join(failed, ", ")+"): delete it by hand.")
+		return
+	}
+	e.warnInstallers(procs, path, "DENIED",
+		"%s unpacked it before gated could stop it. gated removed it from the cache, but whatever this run built or installed from it stays: remove that, then rerun.")
+}
+
+// warnInstallers writes the verdict into each package manager's output.
+// what says what happened ("DENIED"); advice is a sentence about the race,
+// where %s stands for the process ("uv (pid 42)").
+func (e *Engine) warnInstallers(procs []*installer.Process, path, what, advice string) {
+	if len(procs) == 0 {
+		return
+	}
+	name, reasons := filepath.Base(path), []string(nil)
+	if e.Explain != nil {
+		if n, r := e.Explain(path); n != "" {
+			name, reasons = n, r
+		}
+	}
+	for _, p := range procs {
+		lines := []string{fmt.Sprintf("%s %s", name, what)}
+		for _, r := range reasons {
+			lines = append(lines, "  - "+r)
+		}
+		if advice != "" {
+			lines = append(lines, fmt.Sprintf(advice, fmt.Sprintf("%s (pid %d)", p.Comm, p.PID)))
+		}
+		if err := p.Warn(lines...); err != nil {
+			slog.Warn("could not warn package manager", "pid", p.PID, "comm", p.Comm, "err", err)
+			continue
+		}
+		slog.Info("warned package manager", "pid", p.PID, "comm", p.Comm, "path", path)
+	}
+}
+
+func describe(procs []*installer.Process) []string {
+	out := make([]string, 0, len(procs))
+	for _, p := range procs {
+		out = append(out, fmt.Sprintf("%s[%d]", p.Comm, p.PID))
+	}
+	return out
+}
+
+// removeAll deletes path, making directories writable first: go leaves the
+// module cache read-only, and a directory's entries cannot be removed
+// without write permission on it.
+func removeAll(path string) error {
+	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(p, 0o700) //nolint:gosec // G302: a directory about to be deleted, owner only
+		}
+		return nil
+	})
+	return os.RemoveAll(path)
+}
+
 // PruneSeen removes entries from the seen map older than maxAge.
 // Call periodically to prevent unbounded memory growth.
 func (e *Engine) PruneSeen(maxAge time.Duration) int {
@@ -149,8 +291,8 @@ func (e *Engine) PruneSeen(maxAge time.Duration) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	for k, t := range e.seen {
-		if t.Before(cutoff) {
+	for k, s := range e.seen {
+		if s.at.Before(cutoff) {
 			delete(e.seen, k)
 			pruned++
 		}
