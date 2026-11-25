@@ -86,11 +86,52 @@ jobs:
       # OPA version from go.mod, i.e. the one the daemon embeds.
       - run: make policy-test
 
-  # The release configuration is valid, and every platform builds and
-  # packages with GoReleaser (nothing published or kept). darwin needs cgo and
-  # the macOS SDK for the FSEvents watcher, so it builds on macOS.
+  # The release configuration is valid (every run, seconds). The snapshot
+  # build, every platform built and packaged with nothing published or kept,
+  # runs only where it can catch something: the release-please pull request
+  # (the last gate before a tag), changes to the release or build
+  # configuration or the module graph, OS/arch-specific source files (the
+  # cgo FSEvents watcher, the Windows stub), and manual runs. Everything else
+  # is compiled and tested by the jobs above.
   goreleaser:
-    name: goreleaser (${{ matrix.family }})
+    name: goreleaser check
+    runs-on: ubuntu-latest
+    outputs:
+      snapshot: ${{ steps.scope.outputs.snapshot }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.3 # keep in sync with release.yml and the Makefile
+          args: check
+      - id: scope
+        name: Snapshot build needed?
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          snapshot=false
+          if [[ "$EVENT" == workflow_dispatch || "$HEAD_REF" == release-please--* ]]; then
+            snapshot=true
+          elif ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            snapshot=true # no usable base (new branch, force push): build to be safe
+          elif git diff --name-only "$BASE_SHA" HEAD | tee /dev/stderr | grep -qE \
+              '^(\.goreleaser\.yaml|go\.mod|go\.sum|\.github/workflows/(ci|release|release-please)\.yml)$|_(windows|darwin|linux|freebsd|netbsd|openbsd|unix|amd64|arm64|arm|386)(_test)?\.go$'; then
+            snapshot=true
+          fi
+          echo "snapshot=$snapshot" | tee -a "$GITHUB_OUTPUT"
+
+  # darwin needs cgo and the macOS SDK for the FSEvents watcher, so it builds
+  # on macOS; linux and windows build on Linux.
+  snapshot:
+    name: goreleaser snapshot (${{ matrix.family }})
+    needs: goreleaser
+    if: needs.goreleaser.outputs.snapshot == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -110,11 +151,6 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: v2.20.3 # keep in sync with release.yml and the Makefile
-          args: check
       - name: GoReleaser configuration for this runner's platforms
         # outside the checkout: GoReleaser refuses a dirty working tree
         env:
@@ -129,7 +165,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [fmt, vet, staticcheck, test, validate, policy, goreleaser]
+    needs: [fmt, vet, staticcheck, test, validate, policy, goreleaser, snapshot]
     runs-on: ubuntu-latest
     steps:
       - name: Require all jobs to succeed
