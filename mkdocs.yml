@@ -1,5 +1,6 @@
 site_name: gated
 nav:
   - Home: index.md
+  - Examples: examples/README.md
 plugins:
   - techdocs-core

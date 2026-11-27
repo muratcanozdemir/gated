@@ -1,0 +1,18 @@
+{
+  "vulnerability_waivers": {
+    "CVE-2024-0001": {
+      "reason": "not reachable: we never parse untrusted YAML (SEC-123)",
+      "expires": "2027-01-31",
+      "packages": ["pypi/pyyaml"]
+    },
+    "GHSA-7rjr-3q55-vv33": {
+      "reason": "only in the offline report tool, which logs no untrusted input; jar replaced in OPS-412",
+      "expires": "2027-03-15",
+      "packages": ["maven/org.apache.logging.log4j:log4j-core"]
+    },
+    "CVE-2025-9999": {
+      "reason": "disputed by upstream, NVD reanalysis pending",
+      "expires": "2027-02-28"
+    }
+  }
+}

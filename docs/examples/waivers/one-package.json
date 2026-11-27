@@ -1,0 +1,9 @@
+{
+  "vulnerability_waivers": {
+    "CVE-2023-45133": {
+      "reason": "build-time only, never compiles untrusted code; upgrade in PLAT-88",
+      "expires": "2027-01-31",
+      "packages": ["npm/@babel/traverse"]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "vulnerability_waivers": {
+    "GO-2026-6860": {
+      "reason": "gopls v0.24.0 (latest) requires golang.org/x/net v0.59.0; drop once a gopls release requires >= 0.62.0",
+      "expires": "2027-01-31",
+      "packages": ["go/golang.org/x/tools/gopls", "go/golang.org/x/tools"]
+    }
+  }
+}

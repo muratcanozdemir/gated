@@ -290,9 +290,11 @@ behind a GHSA. There is no CVE list to maintain. `known_exploited_cves` in
 grype DB fresh: grype refuses to scan with a DB older than 5 days, and a failed
 scan fails open (or is denied with `require_clean_scan`).
 
-Accept a vulnerability for a while with a waiver. Every waiver must expire;
-expired or undated waivers are ignored and logged as warnings at startup,
-on reload and by `gated -validate`:
+#### Waivers
+
+Accept a vulnerability for a while with a waiver in `vulnerability_waivers`,
+keyed by vulnerability ID. Ready-to-merge files for the examples below, with
+the steps to add one, are in [`docs/examples`](https://github.com/muratcanozdemir/gated/tree/main/docs/examples).
 
 ```json
 "vulnerability_waivers": {
@@ -304,15 +306,74 @@ on reload and by `gated -validate`:
 }
 ```
 
-`packages` is optional; without it the waiver applies to every package. A waiver
-keyed by a CVE also covers the same vulnerability reported under a GHSA ID.
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `reason` | no, but write one | Why the risk is accepted; for the next reader, not checked. |
+| `expires` | yes | `YYYY-MM-DD`, UTC, exclusive: `2027-01-31` waives up to the end of 2027-01-30. |
+| `packages` | no | `<ecosystem>/<name>` of the packages it applies to; without it, every package. |
 
-Entries in `packages` are `<ecosystem>/<name>` of the package being installed
-(ecosystems: `pypi`, `npm`, `go`, `cargo`, `maven`; Maven names are
-`groupId:artifactId`). For a vulnerability in a dependency, that is still the
-package that carries it, not the dependency.
+- Every waiver must expire. Expired, undated or misdated waivers are ignored
+  (the vulnerability is denied again) and logged as warnings at startup, on
+  reload and by `gated -validate`.
+- The key matches the vulnerability's ID or any of its aliases, both ways: a
+  waiver keyed by a CVE covers the same vulnerability reported under a GHSA
+  ID, and one keyed by a GHSA covers it reported as the CVE.
+- `packages` entries use ecosystems `pypi`, `npm`, `go`, `cargo`, `maven`.
+  Maven names are `groupId:artifactId`; npm scoped names keep their scope
+  (`npm/@babel/traverse`). Names are compared in canonical form, so
+  `pypi/PyYAML` and `pypi/pyyaml` are the same.
+- For a vulnerability in a dependency, the entry is still the package being
+  installed, the one that carries it, not the dependency.
+- A waived vulnerability no longer counts towards `max_total_vulnerabilities`.
+  Waivers touch only the vulnerability rules: a denied license or a blocked
+  package stays denied.
+- One key per ID: a vulnerability cannot have two waivers with different
+  dates. List every package under one waiver and give it the later date.
 
-#### Example: waiving a dependency's vulnerability
+##### Example: one package, one vulnerability
+
+`npm install @babel/traverse@7.22.0` is denied for CVE-2023-45133, which grype
+may report under its GHSA ID. Waive the CVE for that package only:
+
+```json
+"vulnerability_waivers": {
+  "CVE-2023-45133": {
+    "reason": "build-time only, never compiles untrusted code; upgrade in PLAT-88",
+    "expires": "2027-01-31",
+    "packages": ["npm/@babel/traverse"]
+  }
+}
+```
+
+`@babel/core` and every other package are still denied for it.
+
+##### Example: several waivers, several ecosystems
+
+Each ID is its own entry; a Maven package is named `groupId:artifactId`:
+
+```json
+"vulnerability_waivers": {
+  "CVE-2024-0001": {
+    "reason": "not reachable: we never parse untrusted YAML (SEC-123)",
+    "expires": "2027-01-31",
+    "packages": ["pypi/pyyaml"]
+  },
+  "GHSA-7rjr-3q55-vv33": {
+    "reason": "only in the offline report tool, which logs no untrusted input; jar replaced in OPS-412",
+    "expires": "2027-03-15",
+    "packages": ["maven/org.apache.logging.log4j:log4j-core"]
+  },
+  "CVE-2025-9999": {
+    "reason": "disputed by upstream, NVD reanalysis pending",
+    "expires": "2027-02-28"
+  }
+}
+```
+
+The last one has no `packages`, so it applies to every package that reports
+it. Keep those rare and short: they hide the vulnerability everywhere.
+
+##### Example: waiving a dependency's vulnerability
 
 `go install golang.org/x/tools/gopls@latest` is denied:
 
@@ -337,9 +398,12 @@ those too (here `golang.org/x/tools`). Add every ID from the denial at once:
 }
 ```
 
+##### Applying and checking waivers
+
 The file is `data.json` in the daemon's `policy_dir`: `/etc/gated/policy` for
-the system service, `~/.config/gated/policy` for the user service. Then check
-it, reload, and retry:
+the system service, `~/.config/gated/policy` for the user service. gated reads
+it only at startup and on reload, so **a waiver does nothing until you reload
+the daemon**. Check it, reload, and retry:
 
 ```bash
 # Check config and policies (and list malformed or expired waivers)
@@ -351,6 +415,18 @@ journalctl --user -u gated -n 5 -o cat   # "policy reload complete"
 
 go install golang.org/x/tools/gopls@latest
 ```
+
+A waiver that does nothing is a warning, not an error, so `-validate` still
+prints `config and policies OK`. Look for the warnings above it:
+
+```
+{"level":"WARN","msg":"policy configuration","warning":"waiver for CVE-2024-0001 expired on 2026-10-31: ignored"}
+{"level":"WARN","msg":"policy configuration","warning":"waiver for CVE-2024-0002 has no valid \"expires\" date (YYYY-MM-DD): ignored"}
+config and policies OK
+```
+
+Delete the entry once the fix ships, or renew `expires` with a new reason if
+it has not.
 
 If the policies do not compile, the reload logs `policy reload validation
 failed, keeping old policies` and the daemon keeps running on the old ones.
