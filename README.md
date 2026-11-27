@@ -412,11 +412,23 @@ How an artifact is scanned:
   newer maps Maven license URLs), with its npm cataloger for unpacked npm
   tarballs switched on. gated then cleans them up: quotes are dropped, the
   common license URLs that syft leaves as-is (opensource.org, apache.org,
-  eclipse.org, gnu.org) become SPDX IDs, and `sha256:...` values (license text
-  syft could not identify) are dropped. Where syft finds none, gated reads the
-  package's own metadata: for Python, `License-Expression` or a `License` field
-  that is an identifier; for crates, `license` in `Cargo.toml` (the legacy
-  `MIT/Apache-2.0` reads as `MIT OR Apache-2.0`).
+  eclipse.org, gnu.org) and free-text names that state a version ("Apache
+  License, Version 2.0", "The MIT License (MIT)") become SPDX IDs, and
+  `sha256:...` values (license text syft could not identify) are dropped.
+  Where syft finds none, gated reads the package's own metadata: for Python,
+  `License-Expression` or a `License` field that is an identifier; for crates,
+  `license` in `Cargo.toml` (the legacy `MIT/Apache-2.0` reads as
+  `MIT OR Apache-2.0`); for Go modules, the module's `LICENSE` file, identified
+  with [licensecheck](https://github.com/google/licensecheck) (as pkg.go.dev
+  does) and accepted only when it is one known license.
+- syft never runs the go toolchain against the network or a real module
+  cache: for a module with dependencies, go would download all of them, into
+  a watched cache where gated would gate each download.
+- gated refreshes grype's vulnerability database in the background (at start
+  and every 6 hours), so that a scan never stops to download it. Scans that
+  start before the first refresh succeeds still fetch it themselves.
+- At most half the CPUs' worth of scans run at once (2 to 8). A project install
+  can land dozens of packages within a second; the rest wait their turn.
 
 `tools.osv_scanner` is no longer used: grype's database covers the same
 advisories. Older configs that set it still load, with a warning.

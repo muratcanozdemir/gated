@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -79,6 +80,9 @@ func main() {
 	// Initialize scanner.
 	scan := scanner.NewOrchestrator(cfg.Tools, cfg.ScanTimeout)
 	warnIfMissing(cfg.Tools)
+	// Keep grype's vulnerability database current in the background, so
+	// that scans never stop to download it (see scanner.KeepDBFresh).
+	go scan.KeepDBFresh(context.Background(), 6*time.Hour)
 
 	// The decision function wired into the fanotify event loop.
 	decisionFn := func(path, ecosystem string, _ int32) bool {

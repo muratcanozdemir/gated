@@ -25,7 +25,7 @@ linters:
     rules:
       # The scanners are the binaries named in the operator's config; they
       # run without a shell, the artifact path as a plain argument.
-      - path: internal/scanner/tools\.go
+      - path: internal/scanner/(tools|grypedb)\.go
         linters: [gosec]
         text: G204
       # fanotify/inotify: raw kernel event structs and fds. Conversions follow

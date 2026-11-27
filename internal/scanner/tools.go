@@ -63,6 +63,20 @@ func runSyft(ctx context.Context, bin, path string) (*SyftOutput, error) {
 	// unpacked npm tarball: without it, an npm package has no license.
 	cmd := exec.CommandContext(ctx, bin, path, "-o", "json", "--quiet",
 		"--select-catalogers", "+javascript-package-cataloger")
+	// Where a go toolchain is on PATH, syft's Go cataloger runs it, and for
+	// a module with dependencies go downloads all of them (hundreds of
+	// files, from the network, into GOMODCACHE: in a watched cache, gated
+	// would then gate each of those downloads). Keep it offline and away
+	// from every real cache. gated finds a module's own license itself
+	// (goModuleLicenses).
+	goCache, err := os.MkdirTemp("", "gated-syft-gomodcache-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = removeTree(goCache) }()
+	cmd.Env = append(os.Environ(),
+		"GOPROXY=off", "GOSUMDB=off", "GOFLAGS=-mod=mod", "GOWORK=off",
+		"GOTOOLCHAIN=local", "GOMODCACHE="+goCache)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -127,8 +141,12 @@ type grypeMetrics struct {
 	BaseScore float64 `json:"baseScore"`
 }
 
-func runGrype(ctx context.Context, bin, path string) ([]Vulnerability, error) {
+// runGrype scans path; env, if not nil, is added to grype's environment.
+func runGrype(ctx context.Context, bin, path string, env []string) ([]Vulnerability, error) {
 	cmd := exec.CommandContext(ctx, bin, path, "-o", "json", "--quiet")
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -192,7 +210,7 @@ func (v *Vulnerability) addExploitInfo(info grypeExploitInfo) {
 // runGrypePURL looks a package up in grype's DB by its package URL
 // (pkg:pypi/pyyaml@5.3.1), from the identity gated resolved rather than from
 // the bytes. "" (no package URL for the ecosystem) finds nothing.
-func runGrypePURL(ctx context.Context, bin, purl string) ([]Vulnerability, error) {
+func runGrypePURL(ctx context.Context, bin, purl string, env []string) ([]Vulnerability, error) {
 	if purl == "" {
 		return nil, nil
 	}
@@ -208,7 +226,7 @@ func runGrypePURL(ctx context.Context, bin, purl string) ([]Vulnerability, error
 	if err := f.Close(); err != nil {
 		return nil, err
 	}
-	return runGrype(ctx, bin, "purl:"+f.Name())
+	return runGrype(ctx, bin, "purl:"+f.Name(), env)
 }
 
 func buildPURL(pkg *resolver.Package) string {
