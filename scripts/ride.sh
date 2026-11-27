@@ -213,8 +213,14 @@ EOF
 	if have cargo; then
 		mkdir -p cp/src && echo 'fn main() {}' > cp/src/main.rs && printf '[package]\nname = "ride"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\nsmallvec = "=1.6.0"\nserde = { version = "=1.0.200", features = ["derive"] }\n' > cp/Cargo.toml
 		run "cargo fetch" sh -c "cd cp && CARGO_HOME='$RUN_DIR/cargo' cargo fetch"
-		local sv se ui; sv=$(wait_verdict smallvec 1.6.0); se=$(wait_verdict serde 1.0.200)
-		ui=$(journal | jq -r 'select((.msg=="ALLOWED" or .msg=="DENIED") and .pkg=="unicode-ident") | .msg' | tail -1)
+		local sv se ui i; sv=$(wait_verdict smallvec 1.6.0); se=$(wait_verdict serde 1.0.200)
+		# unicode-ident comes in through serde_derive, at whatever version
+		# cargo resolves: wait for its verdict like any other.
+		for ((i = 0; i < 120; i++)); do
+			ui=$(journal | jq -r 'select((.msg=="ALLOWED" or .msg=="DENIED") and .pkg=="unicode-ident") | .msg' | tail -1)
+			[ -n "$ui" ] && break
+			sleep 0.5
+		done
 		check "cargo smallvec 1.6.0: denied" "$([ "$sv" = DENIED ] && echo 1 || echo 0)" "verdict=$sv"
 		check "cargo serde 1.0.200: allowed (license from Cargo.toml)" "$([ "$se" = ALLOWED ] && echo 1 || echo 0)" "verdict=$se"
 		check "cargo unicode-ident: allowed (Unicode-3.0)" "$([ "$ui" = ALLOWED ] && echo 1 || echo 0)" "verdict=${ui:-none}"
