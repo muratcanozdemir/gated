@@ -25,7 +25,7 @@ POLICY_COVERAGE ?= 95
 # Keep in sync with GORELEASER_VERSION in .github/workflows/release.yml and ci.yml.
 GORELEASER := $(GO) run github.com/goreleaser/goreleaser/v2@v2.20.3
 
-.PHONY: build test vet lint fmt install install-config install-tools validate \
+.PHONY: build test vet lint ride fmt install install-config install-tools validate \
         clean build-all build-linux build-darwin build-windows check tidy \
         install-systemd install-systemd-unprivileged \
         policy-test policy-fmt snapshot release-check fix
@@ -66,6 +66,12 @@ fmt:
 # golangci-lint (pinned; config in .golangci.yml): staticcheck, gosec,
 # errorlint, revive and more, plus the analyzers `go fix` applies (modernize).
 # Keep the version in sync with .github/workflows/ci.yml.
+# Run gated as a local daemon against real package managers, RUNS times:
+# the test that counts (see scripts/ride.sh).
+RUNS ?= 1
+ride:
+	./scripts/ride.sh $(RUNS)
+
 lint:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
 
