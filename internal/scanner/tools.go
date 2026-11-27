@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -21,6 +22,17 @@ type Vulnerability struct {
 	FixedIn     string  `json:"fixed_in,omitempty"`
 	Description string  `json:"description,omitempty"`
 	Source      string  `json:"source"` // "grype"
+
+	// Dependency and DependencyVersion name what the vulnerability is in
+	// when that is not the package being installed but something inside it:
+	// a module its go.mod requires, a library bundled in its jar. FixedIn is
+	// then a version of the dependency, not of the package. Empty for the
+	// package itself.
+	Dependency        string `json:"dependency,omitempty"`
+	DependencyVersion string `json:"dependency_version,omitempty"`
+	// matched is the package URL grype matched, for telling the package
+	// itself from its dependencies (markDependencies).
+	matched grypeArtifact
 
 	// Aliases are other IDs of the same vulnerability (e.g. the CVE behind
 	// a GHSA), so policy lists and waivers keyed by CVE still match.
@@ -195,6 +207,7 @@ func parseGrype(report []byte) ([]Vulnerability, error) {
 			Severity:    strings.ToLower(m.Vulnerability.Severity),
 			Description: m.Vulnerability.Description,
 			Source:      "grype",
+			matched:     m.Artifact,
 		}
 		if len(m.Vulnerability.Fix.Versions) > 0 {
 			v.FixedIn = m.Vulnerability.Fix.Versions[0]
@@ -224,6 +237,60 @@ func (v *Vulnerability) addExploitInfo(info grypeExploitInfo) {
 	for _, e := range info.EPSS {
 		v.EPSS = max(v.EPSS, e.EPSS)
 	}
+}
+
+// markDependencies sets Dependency on the vulnerabilities grype matched
+// against something other than pkg itself, comparing package URLs without
+// version: pkg:golang/golang.org/x/net@v0.59.0 inside
+// golang.org/x/tools/gopls is a dependency. A match without a package URL,
+// or a package gated has none for, is left as the package's own: gated only
+// names a dependency when grype says which one.
+func markDependencies(pkg *resolver.Package, vulns []Vulnerability) {
+	self := purlIdentity(pkg.Ecosystem, buildPURL(pkg))
+	if self == "" {
+		return
+	}
+	for i := range vulns {
+		v := &vulns[i]
+		m := purlIdentity(pkg.Ecosystem, v.matched.PURL)
+		if m == "" || m == self || sameJar(pkg, v.matched) {
+			continue
+		}
+		v.Dependency, v.DependencyVersion = v.matched.Name, v.matched.Version
+	}
+}
+
+// purlIdentity is a package URL without version, qualifiers or subpath,
+// with the name in the ecosystem's canonical form, so two URLs for the same
+// package compare equal: pkg:pypi/PyYAML@5.3.1 and pkg:pypi/pyyaml are the
+// same package.
+func purlIdentity(ecosystem, purl string) string {
+	if i := strings.IndexAny(purl, "?#"); i >= 0 {
+		purl = purl[:i]
+	}
+	if i := strings.LastIndex(purl, "@"); i > strings.LastIndex(purl, "/") {
+		purl = purl[:i]
+	}
+	switch ecosystem {
+	case "pypi":
+		purl = strings.ToLower(pep503.ReplaceAllString(purl, "-"))
+	case "npm":
+		purl = strings.ToLower(purl)
+	}
+	return purl
+}
+
+var pep503 = regexp.MustCompile(`[-_.]+`)
+
+// sameJar: syft guesses a jar's groupId from its contents, and may guess
+// another one than the pom gated resolved; the jar's own artifactId at its
+// own version is still the package itself.
+func sameJar(pkg *resolver.Package, a grypeArtifact) bool {
+	if pkg.Ecosystem != "maven" || a.Version != pkg.Version {
+		return false
+	}
+	_, artifactID, ok := strings.Cut(pkg.Name, ":")
+	return ok && a.Name == artifactID
 }
 
 // --- grype by package URL ---
