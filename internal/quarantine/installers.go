@@ -18,7 +18,9 @@ import (
 // while gated holds it, and waits. So a stream is held only while it may
 // still be needed: the process is running, or it was seen moments ago
 // (installerRecent: a package of its may be about to be judged), or a verdict
-// in its cache is pending. ReapInstallers closes the rest.
+// it is to be warned about is pending. Only those verdicts: another process
+// busy in the same cache does not keep it waiting. ReapInstallers closes the
+// rest.
 const (
 	// activityRescan limits /proc scans for one cache: events come in bursts.
 	activityRescan = 100 * time.Millisecond
@@ -35,12 +37,12 @@ type cacheActivity struct {
 	scanMu  sync.Mutex // one scan at a time; later callers wait for its result
 	scanned time.Time
 	procs   map[int]*seenProcess
-	pending int // HandleInPlace verdicts in flight in this cache
 }
 
 type seenProcess struct {
 	*installer.Process
-	seen time.Time
+	seen    time.Time
+	pending int // verdicts in flight that this process is to be told about
 }
 
 type installerRegistry struct {
@@ -98,46 +100,38 @@ func (e *Engine) NoteActivity(root string) {
 // installersOf returns the processes that can be the one installing a
 // package that just appeared in root: still running, or seen working there
 // moments ago. They stay owned by the registry: callers must not close them.
-func (e *Engine) installersOf(root string) []*installer.Process {
+// release ends their hold for this verdict; until it is called, they stay
+// open (see ReapInstallers).
+func (e *Engine) installersOf(root string) (procs []*installer.Process, release func()) {
 	r := &e.installers
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	a := r.caches[root]
 	if a == nil {
-		return nil
+		return nil, func() {}
 	}
 	now := time.Now()
 	r.expire(a, now)
-	out := make([]*installer.Process, 0, len(a.procs))
+	var held []*seenProcess
 	for _, p := range a.procs {
 		if now.Sub(p.seen) <= installerRecent || p.Alive() {
-			out = append(out, p.Process)
+			p.pending++
+			held = append(held, p)
+			procs = append(procs, p.Process)
 		}
 	}
-	return out
-}
-
-// claim marks a verdict in root as pending, so that the processes found for
-// it stay open until it is delivered; the returned func ends the claim.
-func (e *Engine) claim(root string) func() {
-	r := &e.installers
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	a := r.caches[root]
-	if a == nil {
-		return func() {}
-	}
-	a.pending++
-	return func() {
+	return procs, func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		a.pending--
+		for _, p := range held {
+			p.pending--
+		}
 	}
 }
 
 // ReapInstallers closes the streams of processes that have exited and can
 // no longer be blamed for a package: not seen for installerRecent, and no
-// verdict pending in their cache. Call it often (the watchers do, four times a
+// verdict they are to be told about pending. Call it often (the watchers do, four times a
 // second): until then, a pipe the process wrote to stays open.
 func (e *Engine) ReapInstallers() { e.reapInstallers(time.Now()) }
 
@@ -147,11 +141,8 @@ func (e *Engine) reapInstallers(now time.Time) {
 	defer r.mu.Unlock()
 	for root, a := range r.caches {
 		r.expire(a, now)
-		if a.pending > 0 {
-			continue
-		}
 		for pid, p := range a.procs {
-			if now.Sub(p.seen) > installerRecent && !p.Alive() {
+			if p.pending == 0 && now.Sub(p.seen) > installerRecent && !p.Alive() {
 				p.Close()
 				delete(a.procs, pid)
 			}
@@ -165,7 +156,7 @@ func (e *Engine) reapInstallers(now time.Time) {
 // expire closes and forgets processes not seen for installerTTL. r.mu held.
 func (r *installerRegistry) expire(a *cacheActivity, now time.Time) {
 	for pid, p := range a.procs {
-		if now.Sub(p.seen) > installerTTL {
+		if p.pending == 0 && now.Sub(p.seen) > installerTTL {
 			p.Close()
 			delete(a.procs, pid)
 		}

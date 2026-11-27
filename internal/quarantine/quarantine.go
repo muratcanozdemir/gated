@@ -200,8 +200,8 @@ func (e *Engine) HandleInPlace(ip *resolver.InPlace, ecosystem string) {
 	// Who is installing it: found now, or already when it started working
 	// in the cache (NoteActivity); by the time the verdict is in, it may be done.
 	e.NoteActivity(ip.Root)
-	defer e.claim(ip.Root)()
-	procs := e.installersOf(ip.Root)
+	procs, release := e.installersOf(ip.Root)
+	defer release()
 
 	slog.Info("gating in place", "path", path, "ecosystem", ecosystem, "installers", describe(procs))
 	if e.decisionFn(path, ecosystem, -1) {

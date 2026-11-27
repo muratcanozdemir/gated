@@ -44,10 +44,10 @@ func TestReapReleasesExitedInstallersPipe(t *testing.T) {
 
 	e := NewEngine(nil, false)
 	e.NoteActivity(cache)
-	if len(e.installersOf(cache)) != 1 {
+	procs, release := e.installersOf(cache) // a verdict it is to be told about is pending
+	if len(procs) != 1 {
 		t.Fatal("the process holding the cache lock was not found")
 	}
-	release := e.claim(cache) // a verdict in this cache is pending
 
 	_ = stdin.Close()
 	_ = cmd.Wait() // the package manager is done
