@@ -137,7 +137,37 @@ jobs:
           cache: false
 
       - name: Install syft (GoReleaser's SBOM generator)
-        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        # The pinned release, straight from the API with the job's token, and
+        # checked against pinned checksums. Not anchore/sbom-action's
+        # download-syft: its install.sh first resolves the tag on the
+        # unauthenticated release web page, which returned 504 while the
+        # downloads themselves worked, and failed the v1.1.1 release twice.
+        # To bump: new version, and both sums from syft_<v>_checksums.txt.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYFT_VERSION: 1.54.0
+          SHA256_LINUX_X64: 54a87372498168b2d033e876fd41fa4e8035b872699e525a57046e1f2f09c860
+          SHA256_MACOS_ARM64: 7e0bdad94c569fc6d5785c9a657bbae3d4c4e140ccb5eace3d0b5b6bc2b6dbcf
+        shell: bash
+        run: |
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            Linux/X64)   platform=linux_amd64  sum=$SHA256_LINUX_X64 ;;
+            macOS/ARM64) platform=darwin_arm64 sum=$SHA256_MACOS_ARM64 ;;
+            *) echo "::error::no pinned syft for $RUNNER_OS/$RUNNER_ARCH"; exit 1 ;;
+          esac
+          asset="syft_${SYFT_VERSION}_${platform}.tar.gz"
+          dir="$RUNNER_TEMP/syft"
+          mkdir -p "$dir"
+          for attempt in 1 2 3; do
+            gh release download "v$SYFT_VERSION" -R anchore/syft -p "$asset" -D "$dir" --clobber && break
+            [ "$attempt" = 3 ] && { echo "::error::could not download $asset"; exit 1; }
+            echo "::warning::download of $asset failed (attempt $attempt), retrying"
+            sleep $((attempt * 15))
+          done
+          (cd "$dir" && echo "$sum  $asset" | shasum -a 256 -c -)
+          tar -xzf "$dir/$asset" -C "$dir" syft
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/syft" version | grep -E "^Version: +$SYFT_VERSION$"
 
       - name: GoReleaser configuration for this platform only
         # outside the checkout: GoReleaser refuses a dirty working tree
