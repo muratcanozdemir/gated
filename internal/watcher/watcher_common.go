@@ -3,6 +3,7 @@ package watcher
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/muratcanozdemir/gated/internal/config"
@@ -47,18 +48,22 @@ func isMetadataFile(path string) bool {
 // package manager uses the moment they land (resolver.InPlace), held
 // otherwise. It runs async so the event loop isn't blocked. Returns false if
 // path is not an artifact to gate.
-func dispatch(q *quarantine.Engine, path, ecosystem string) bool {
+//
+// The handler runs in a goroutine counted in handlers: a watcher's Run waits
+// for them before it returns, so that nothing is still holding or restoring a
+// file once the watcher is stopped.
+func dispatch(q *quarantine.Engine, handlers *sync.WaitGroup, path, ecosystem string) bool {
 	if quarantine.IsQuarantinePath(path) || resolver.IsUnpackedContent(path, ecosystem) {
 		return false
 	}
 	if ip := resolver.ResolveInPlace(path, ecosystem); ip != nil {
-		go q.HandleInPlace(ip, ecosystem)
+		handlers.Go(func() { q.HandleInPlace(ip, ecosystem) })
 		return true
 	}
 	if isMetadataFile(path) || !isArtifactFile(path) {
 		return false
 	}
-	go q.HandleNewArtifact(path, ecosystem)
+	handlers.Go(func() { q.HandleNewArtifact(path, ecosystem) })
 	return true
 }
 
@@ -86,16 +91,24 @@ func isArtifactFile(path string) bool {
 // to the verdict cache's 24h — "seen" only needs to survive duplicate
 // notifications for the same path shortly after processing, not long-term
 // caching (the verdict cache handles that).
+//
+// It also releases, four times a second, the output streams of package managers
+// that have exited (quarantine.Engine.ReapInstallers): a pipe gated holds
+// open keeps whatever reads it waiting.
 func startSeenPruner(done <-chan struct{}, qEngine *quarantine.Engine) {
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
+		reap := time.NewTicker(250 * time.Millisecond)
+		defer reap.Stop()
 		for {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
 				qEngine.PruneSeen(30 * time.Minute)
+			case <-reap.C:
+				qEngine.ReapInstallers()
 			}
 		}
 	}()

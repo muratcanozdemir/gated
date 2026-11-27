@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/muratcanozdemir/gated/internal/config"
@@ -28,17 +30,31 @@ type ScanResult struct {
 type Orchestrator struct {
 	tools   config.Tools
 	timeout time.Duration
+	dbFresh atomic.Bool // grype's database is kept current by KeepDBFresh
+	slots   chan struct{}
+}
+
+// maxConcurrentScans bounds how many scans run at once. Each runs syft and
+// grype twice; a project install can land 40 packages within a second, and
+// 40 scans at once took 27 s each instead of 2 in the ride (and starved the
+// machine). Queued scans wait their turn, so does the package manager
+// waiting for their verdict, but the queue drains faster than the stampede.
+func maxConcurrentScans() int {
+	return min(max(runtime.NumCPU()/2, 2), 8)
 }
 
 func NewOrchestrator(tools config.Tools, timeoutSec int) *Orchestrator {
 	return &Orchestrator{
 		tools:   tools,
 		timeout: time.Duration(timeoutSec) * time.Second,
+		slots:   make(chan struct{}, maxConcurrentScans()),
 	}
 }
 
 // Scan runs all tools against the artifact and returns aggregated results.
 func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
+	o.slots <- struct{}{} // the timeout covers the scan, not the wait for a slot
+	defer func() { <-o.slots }()
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
 	defer cancel()
 
@@ -103,7 +119,7 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 	}()
 	go func() {
 		defer wg.Done()
-		v, err := runGrype(ctx, o.tools.Grype, target)
+		v, err := runGrype(ctx, o.tools.Grype, target, o.grypeEnv())
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
@@ -114,7 +130,7 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 	}()
 	go func() {
 		defer wg.Done()
-		v, err := runGrypePURL(ctx, o.tools.Grype, buildPURL(pkg))
+		v, err := runGrypePURL(ctx, o.tools.Grype, buildPURL(pkg), o.grypeEnv())
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
@@ -132,6 +148,8 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 			result.Licenses = pythonMetadataLicenses(dir)
 		case "cargo":
 			result.Licenses = cargoLicenses(dir)
+		case "go":
+			result.Licenses = goModuleLicenses(dir, pkg.Name, pkg.Version)
 		}
 	}
 

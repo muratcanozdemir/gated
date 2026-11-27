@@ -277,9 +277,13 @@ func fakeTools(t *testing.T, syftReport, grypeReport, purlReport string) (config
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls.log")
 	for name, body := range map[string]string{
-		"syft": `printf '%s\n' "syft $*" >> "$CALLS"; printf '%s' "$SYFT_REPORT"`,
+		"syft": `printf '%s\n' "syft $*" >> "$CALLS"
+printf 'syft env: GOPROXY=%s GOMODCACHE=%s\n' "$GOPROXY" "$GOMODCACHE" >> "$CALLS"
+printf '%s' "$SYFT_REPORT"`,
 		"grype": `printf '%s\n' "grype $*" >> "$CALLS"
+printf 'grype env: GRYPE_DB_AUTO_UPDATE=%s\n' "$GRYPE_DB_AUTO_UPDATE" >> "$CALLS"
 case "$1" in
+  db) exit 0 ;;
   purl:*) printf 'purls: %s\n' "$(cat "${1#purl:}")" >> "$CALLS"; printf '%s' "$PURL_REPORT" ;;
   *) printf '%s' "$GRYPE_REPORT" ;;
 esac`,
@@ -381,5 +385,71 @@ func TestScan_UnpackFailureIsReportedAndFileStillScanned(t *testing.T) {
 	}
 	if !strings.Contains(readFile(t, log), "syft "+src+" ") {
 		t.Error("the file must still be scanned as is")
+	}
+}
+
+// syft must never run go against a real module cache or the network: for a
+// module with dependencies, go downloads all of them (into a watched cache,
+// where gated would gate each download).
+func TestScan_SyftKeptOffGoNetworkAndCaches(t *testing.T) {
+	tools, log := fakeTools(t, `{"artifacts": []}`, noMatches, noMatches)
+	dir := t.TempDir()
+	jar := filepath.Join(dir, "x-1.0.jar")
+	if err := os.WriteFile(jar, []byte("PK"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOMODCACHE", filepath.Join(dir, "real-cache"))
+	t.Setenv("GOPROXY", "https://proxy.golang.org")
+	if _, err := NewOrchestrator(tools, 30).Scan(&resolver.Package{Ecosystem: "maven", Name: "g:x", Version: "1.0", Path: jar}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(log)
+	var env string
+	for line := range strings.SplitSeq(string(b), "\n") {
+		if strings.HasPrefix(line, "syft env:") {
+			env = line
+		}
+	}
+	if !strings.Contains(env, "GOPROXY=off") || strings.Contains(env, "real-cache") || !strings.Contains(env, "gated-syft-gomodcache-") {
+		t.Errorf("syft ran with %q: want GOPROXY=off and a throwaway GOMODCACHE", env)
+	}
+}
+
+// Scans stop checking for a database update once gated keeps it fresh: a
+// refresh inside a scan took 80 s, and a package manager's piped output
+// waited for that verdict all along.
+func TestScan_NoDBUpdateOnceKeptFresh(t *testing.T) {
+	tools, log := fakeTools(t, `{"artifacts": []}`, noMatches, noMatches)
+	jar := filepath.Join(t.TempDir(), "x-1.0.jar")
+	if err := os.WriteFile(jar, []byte("PK"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := NewOrchestrator(tools, 30)
+	pkg := &resolver.Package{Ecosystem: "maven", Name: "g:x", Version: "1.0", Path: jar}
+	updates := func() (on, off int) {
+		b, _ := os.ReadFile(log)
+		for line := range strings.SplitSeq(string(b), "\n") {
+			switch line {
+			case "grype env: GRYPE_DB_AUTO_UPDATE=":
+				on++
+			case "grype env: GRYPE_DB_AUTO_UPDATE=false":
+				off++
+			}
+		}
+		return on, off
+	}
+	if _, err := o.Scan(pkg); err != nil {
+		t.Fatal(err)
+	}
+	if on, off := updates(); on != 2 || off != 0 {
+		t.Fatalf("before a refresh: %d scans may update, %d may not; want both to (a missing DB must still be fetched)", on, off)
+	}
+	o.updateDB(t.Context())
+	_ = os.Truncate(log, 0)
+	if _, err := o.Scan(pkg); err != nil {
+		t.Fatal(err)
+	}
+	if on, off := updates(); on != 0 || off != 2 {
+		t.Fatalf("after a refresh: %d grype runs may update, %d may not", on, off)
 	}
 }

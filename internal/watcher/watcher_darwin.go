@@ -83,6 +83,7 @@ type DarwinWatcher struct {
 	warnOnly   bool
 	done       chan struct{}
 	closed     atomic.Bool
+	handlers   sync.WaitGroup // artifacts being gated (dispatch); Run waits for them
 }
 
 func New(wcfg Config) (Watcher, error) {
@@ -154,6 +155,9 @@ func (w *DarwinWatcher) Run() error {
 	C.FSEventStreamStop(stream)
 	C.FSEventStreamInvalidate(stream)
 	C.FSEventStreamRelease(stream)
+	// No callback can dispatch another handler now: wait for the last to put
+	// its file back or remove it.
+	w.handlers.Wait()
 	return nil
 }
 
@@ -197,7 +201,7 @@ func (w *DarwinWatcher) handleFSEvent(path string, flags uint32) {
 
 	// Artifacts only (wheels, jars, crates, zips, tarballs), handled in a
 	// goroutine so the callback returns fast.
-	if dispatch(w.qEngine, path, ecosystem) {
+	if dispatch(w.qEngine, &w.handlers, path, ecosystem) {
 		slog.Debug("fsevents", "path", path, "ecosystem", ecosystem, "created", created, "modified", modified)
 	}
 }

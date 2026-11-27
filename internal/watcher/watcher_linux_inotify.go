@@ -44,6 +44,8 @@ type InotifyQuarantineWatcher struct {
 
 	done    chan struct{}
 	running atomic.Bool // Run owns the inotify fd and closes it on return
+
+	handlers sync.WaitGroup // artifacts being gated (dispatch); Run waits for them
 }
 
 type watchEntry struct {
@@ -114,9 +116,7 @@ func (w *InotifyQuarantineWatcher) addWatchRecursive(root, ecosystem string) (in
 			return filepath.SkipDir
 		}
 
-		// Skip hidden directories (e.g. .git).
-		base := filepath.Base(path)
-		if base != "." && strings.HasPrefix(base, ".") && base != ".m2" && base != ".cache" && base != ".cargo" && base != ".npm" {
+		if isHiddenDir(path) {
 			return filepath.SkipDir
 		}
 
@@ -129,6 +129,21 @@ func (w *InotifyQuarantineWatcher) addWatchRecursive(root, ecosystem string) (in
 	})
 
 	return count, err
+}
+
+// isHiddenDir reports whether a directory is hidden (.git, a package
+// manager's .tmpXXXX staging area) and so neither watched nor gated. The
+// dot-directories that hold package caches are not hidden.
+func isHiddenDir(path string) bool {
+	base := filepath.Base(path)
+	if base == "." || !strings.HasPrefix(base, ".") {
+		return false
+	}
+	switch base {
+	case ".m2", ".cache", ".cargo", ".npm":
+		return false
+	}
+	return true
 }
 
 func (w *InotifyQuarantineWatcher) addWatch(dir, ecosystem string) error {
@@ -154,6 +169,10 @@ func (w *InotifyQuarantineWatcher) Run() error {
 	// Close only signals; the fd is closed here, once the loop is no longer
 	// reading it (closing it under a read raised "bad file descriptor").
 	defer unix.Close(w.fd)
+	// Deferred after the fd close, so it runs first: once the loop is done no
+	// event can dispatch another handler, and Run returns when the last has
+	// put its file back or removed it.
+	defer w.handlers.Wait()
 	// Use epoll to multiplex inotify fd with the done channel.
 	// Since done is a Go channel and not an fd, we use a pipe as
 	// the cancellation signal.
@@ -304,7 +323,10 @@ func (w *InotifyQuarantineWatcher) handleInotifyEvent(wd int, mask uint32, name 
 	// lands afterwards raises its own event. A file reported both ways is
 	// gated once (the quarantine engine drops duplicates).
 	if mask&unix.IN_ISDIR != 0 {
-		if mask&(unix.IN_CREATE|unix.IN_MOVED_TO) == 0 || quarantine.IsQuarantinePath(fullPath) {
+		// A hidden directory is a package manager's staging area (uv's
+		// .tmpXXXX): what is written there is unfinished, and lands in the
+		// cache by a rename, which raises its own event.
+		if mask&(unix.IN_CREATE|unix.IN_MOVED_TO) == 0 || quarantine.IsQuarantinePath(fullPath) || isHiddenDir(fullPath) {
 			return
 		}
 		// A package unpacked into the cache (uv renames it into place).
@@ -330,7 +352,7 @@ func (w *InotifyQuarantineWatcher) handleInotifyEvent(wd int, mask uint32, name 
 // gate hands an artifact to the quarantine engine (see dispatch), skipping
 // quarantine files, metadata and non-artifacts. Returns whether it did.
 func (w *InotifyQuarantineWatcher) gate(path, ecosystem, event string) bool {
-	if !dispatch(w.qEngine, path, ecosystem) {
+	if !dispatch(w.qEngine, &w.handlers, path, ecosystem) {
 		return false
 	}
 	slog.Info("detected", "path", path, "ecosystem", ecosystem, "event", event)
@@ -346,7 +368,7 @@ func (w *InotifyQuarantineWatcher) gateExisting(root, ecosystem string) {
 		switch {
 		case err != nil:
 			return nil // vanished or unreadable: nothing to gate
-		case d.IsDir() && (quarantine.IsQuarantinePath(path) || resolver.IsUnpackedContent(path, ecosystem)):
+		case d.IsDir() && (quarantine.IsQuarantinePath(path) || resolver.IsUnpackedContent(path, ecosystem) || isHiddenDir(path)):
 			return filepath.SkipDir
 		case d.IsDir() && path != root && w.gate(path, ecosystem, "existing"):
 			return filepath.SkipDir // an unpacked package, judged whole

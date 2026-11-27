@@ -161,3 +161,22 @@ func TestInotify_GoZipGatedInPlace(t *testing.T) {
 		t.Fatalf("an allowed module zip must stay where go wrote it: %v", err)
 	}
 }
+
+// A package manager's hidden staging directory (uv's .tmpXXXX) is never
+// gated, even when it already holds a finished-looking artifact by the time
+// the watcher sees it appear: what lands in the cache arrives by a rename.
+func TestInotify_HiddenStagingDirNotGated(t *testing.T) {
+	root := t.TempDir()
+	staging := t.TempDir()
+	gated := startInotify(t, root, "cargo")
+	src := filepath.Join(staging, ".tmpAbC")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeArtifact(t, filepath.Join(src, "serde-1.0.0.crate"))
+	if err := os.Rename(src, filepath.Join(root, ".tmpAbC")); err != nil {
+		t.Fatal(err)
+	}
+	writeArtifact(t, filepath.Join(root, "after.crate")) // the watcher is live
+	expectGated(t, gated, "after.crate")
+}

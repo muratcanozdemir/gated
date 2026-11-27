@@ -3,6 +3,7 @@ module github.com/muratcanozdemir/gated
 go 1.26.0
 
 require (
+	github.com/google/licensecheck v0.3.1
 	github.com/open-policy-agent/opa v1.22.4
 	golang.org/x/sys v0.50.0
 	gopkg.in/yaml.v3 v3.0.1

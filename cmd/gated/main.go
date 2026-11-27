@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -79,6 +80,9 @@ func main() {
 	// Initialize scanner.
 	scan := scanner.NewOrchestrator(cfg.Tools, cfg.ScanTimeout)
 	warnIfMissing(cfg.Tools)
+	// Keep grype's vulnerability database current in the background, so
+	// that scans never stop to download it (see scanner.KeepDBFresh).
+	go scan.KeepDBFresh(context.Background(), 6*time.Hour)
 
 	// The decision function wired into the fanotify event loop.
 	decisionFn := func(path, ecosystem string, _ int32) bool {
@@ -110,6 +114,12 @@ func main() {
 			// A package a package manager unpacked into its cache (uv).
 			if ip := resolver.ResolveInPlace(idPath, ecosystem); ip != nil {
 				pkg = ip.Pkg
+			}
+		}
+		if pkg == nil && ecosystem == "maven" {
+			// A local repository not under "repository/": the jar says.
+			if pkg = resolver.ResolveMavenJar(idPath, path); pkg != nil {
+				pkg.Path = path
 			}
 		}
 		if pkg == nil {

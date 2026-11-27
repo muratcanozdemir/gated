@@ -16,6 +16,12 @@ func TestNormalizeLicense(t *testing.T) {
 		"https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html":        "LGPL-2.1-only",
 		"sha256:cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4": "", // unidentified license text
 		"https://example.com/our-license":                                "https://example.com/our-license",
+		"Apache 2.0":                                                     "Apache-2.0", // requests-toolbelt, rfc3986
+		"Apache License 2.0":                                             "Apache-2.0", // s3transfer
+		"Apache License, Version 2.0":                                    "Apache-2.0", // readme-renderer
+		"The MIT License (MIT)":                                          "MIT",
+		"BSD License":                                                    "BSD License", // which BSD? left for review
+		"Apache Software License":                                        "Apache Software License",
 		"  ":                                                             "",
 	} {
 		if got := normalizeLicense(in); got != want {
@@ -89,5 +95,68 @@ func TestNpmScopedName(t *testing.T) {
 		if got, ok := npmScopedName(root, "babel-traverse", "7.22.0"); ok {
 			t.Errorf("%s: accepted %q", name, got)
 		}
+	}
+}
+
+func TestGoModuleLicenses(t *testing.T) {
+	bsd3, err := os.ReadFile(filepath.Join("testdata", "LICENSE.bsd3")) // github.com/google/uuid's
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	// Module zips name their top directory in the cache's case encoding.
+	top := filepath.Join(root, "github.com", "!burnt!sushi", "toml@v1.0.0")
+	if err := os.MkdirAll(top, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(top, "LICENSE"), bsd3, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := goModuleLicenses(root, "github.com/BurntSushi/toml", "v1.0.0"); len(got) != 1 || got[0] != "BSD-3-Clause" {
+		t.Errorf("goModuleLicenses = %v, want [BSD-3-Clause]", got)
+	}
+	if got := goModuleLicenses(root, "github.com/other/mod", "v1.0.0"); got != nil {
+		t.Errorf("no such module: %v", got)
+	}
+
+	// A license file that is mostly something else is not guessed at.
+	odd := filepath.Join(root, "example.com", "odd@v0.1.0")
+	if err := os.MkdirAll(odd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	custom := "You may use this software only on Tuesdays, and must send the author a postcard.\n"
+	if err := os.WriteFile(filepath.Join(odd, "LICENSE"), []byte(custom+custom+string(bsd3[:200])), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := goModuleLicenses(root, "example.com/odd", "v0.1.0"); got != nil {
+		t.Errorf("custom license classified as %v", got)
+	}
+}
+
+func TestClassifyLicenseMIT(t *testing.T) {
+	mit := `MIT License
+
+Copyright (c) 2020 Someone
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`
+	if got := classifyLicense([]byte(mit)); got != "MIT" {
+		t.Errorf("classifyLicense(MIT) = %q", got)
 	}
 }

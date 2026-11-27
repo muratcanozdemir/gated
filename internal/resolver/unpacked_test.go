@@ -91,3 +91,27 @@ func TestUnescapeGoPath(t *testing.T) {
 		}
 	}
 }
+
+func TestCacheRoot(t *testing.T) {
+	fresh := t.TempDir() // a new uv cache: CACHEDIR.TAG, no archive-v0 yet
+	if err := os.WriteFile(filepath.Join(fresh, "CACHEDIR.TAG"), []byte("Signature: 8a477f597d28d172789f06886806bc55\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	used := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(used, "archive-v0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ path, eco, want string }{
+		{filepath.Join(fresh, ".tmpAbC"), "pypi", fresh},
+		{filepath.Join(fresh, ".lock"), "pypi", fresh},
+		{filepath.Join(used, "archive-v0", "Xy12"), "pypi", used},
+		{filepath.Join(used, "wheels-v6", "pypi", "x"), "pypi", used},
+		{filepath.Join(t.TempDir(), "x.whl"), "pypi", ""},
+		{"/m/cache/download/golang.org/x/text/@v/v0.3.5.lock", "go", "/m"},
+		{"/r/org/x/1.0/x-1.0.jar", "maven", ""},
+	} {
+		if got := CacheRoot(c.path, c.eco); got != c.want {
+			t.Errorf("CacheRoot(%s) = %q, want %q", c.path, got, c.want)
+		}
+	}
+}
