@@ -14,8 +14,9 @@
 # Package managers run with their output piped (what a CI log, `| tee` or an
 # IDE does) under a timeout, so a hang is a failure, not a stall.
 #
-# Needs: systemd --user, curl, jq, syft and grype; uv, go, npm and cargo are
-# each optional (their checks are skipped without them). Network access.
+# Needs: systemd --user, curl, jq, syft and grype; uv, go, npm, bun, yarn
+# (through corepack: it fetches yarn 1 and 4 itself) and cargo are each
+# optional (their checks are skipped without them). Network access.
 # Each run's files stay in $RIDE_DIR (default: a new temp dir) for a look.
 set -uo pipefail
 
@@ -53,10 +54,16 @@ run() {
 
 journal() { journalctl --user -u "$UNIT" -o cat --no-pager | grep '^{'; }
 
+# SINCE: verdicts are read from the daemon's log after its first SINCE
+# lines (since_now: from now on), where an earlier check judged the same
+# package from another cache.
+SINCE=0
+since_now() { SINCE=$(journal | wc -l); }
+
 # verdict PKG VERSION: ALLOWED, DENIED or "none" from the daemon's log.
 verdict() {
 	local v
-	v=$(journal | jq -r --arg p "$1" --arg v "$2" \
+	v=$(journal | tail -n +"$((SINCE + 1))" | jq -r --arg p "$1" --arg v "$2" \
 		'select((.msg=="ALLOWED" or .msg=="DENIED") and .pkg==$p and .version==$v) | .msg' | tail -1)
 	echo "${v:-none}"
 }
@@ -99,7 +106,8 @@ one_run() {
 	local n=$1
 	RUN_DIR="$RIDE_DIR/run$n"
 	UNIT="gated-ride-$$-$n"
-	mkdir -p "$RUN_DIR"/{out,uv,gomod,m2/repository,buildrepo,npm,cargo,verdicts,work}
+	mkdir -p "$RUN_DIR"/{out,uv,gomod,m2/repository,buildrepo,npm,bun,yarn-berry/cache,yarn-classic,cargo,verdicts,work}
+	SINCE=0
 	results=()
 	local failures_before=$failures
 
@@ -112,6 +120,9 @@ watch_paths:
   - {path: $RUN_DIR/m2/repository, ecosystem: maven}
   - {path: $RUN_DIR/buildrepo, ecosystem: maven}  # -Dmaven.repo.local=...: no "repository/" in the path
   - {path: $RUN_DIR/npm,    ecosystem: npm}
+  - {path: $RUN_DIR/bun,    ecosystem: npm}
+  - {path: $RUN_DIR/yarn-berry/cache, ecosystem: npm}
+  - {path: $RUN_DIR/yarn-classic, ecosystem: npm}
   - {path: $RUN_DIR/cargo,  ecosystem: cargo}
 tools: {syft: $SYFT, grype: $GRYPE}
 policy_dir: $ROOT/policy
@@ -209,6 +220,75 @@ EOF
 	else
 		results+=("skip  npm not installed")
 	fi
+
+	# bun, yarn and yarn classic install from the npm registry into caches of
+	# their own, and use each package the moment it lands: gated judges it in
+	# place, and on a deny removes it from the cache and warns the installer.
+	# Each step installs into a project of its own (JS_PROJECT): one that
+	# already depends on a denied package would fetch it again.
+	js_project() { # js_project DIR [PACKAGE_MANAGER]
+		JS_PROJECT="$RUN_DIR/work/$1"
+		rm -rf "$JS_PROJECT" && mkdir -p "$JS_PROJECT" && touch "$JS_PROJECT/yarn.lock" \
+			&& printf '{"name":"ride","version":"1.0.0"%s}\n' "${2:+,\"packageManager\":\"$2\"}" > "$JS_PROJECT/package.json"
+		export JS_PROJECT
+	}
+	# js_removed LABEL GLOB: nothing matches GLOB (relative to RUN_DIR) soon.
+	js_removed() {
+		local left="" i
+		for ((i = 0; i < 20; i++)); do
+			left=$(compgen -G "$RUN_DIR/$2" || true)
+			[ -z "$left" ] && break
+			sleep 0.5
+		done
+		check "$1: removed from the cache" "$([ -z "$left" ] && echo 1 || echo 0)" "${left#"$RUN_DIR/"}"
+	}
+	local babel=@babel/helper-string-parser
+	if have bun; then
+		local bun_add='cd "$JS_PROJECT" && BUN_INSTALL_CACHE_DIR="$0" bun add --no-progress "$@"'
+		js_project bun-deny; since_now
+		denied_piped "bun lodash 4.17.20" lodash 4.17.20 60 sh -c "$bun_add" "$RUN_DIR/bun" lodash@4.17.20
+		js_removed "bun lodash 4.17.20" 'bun/lodash@4.17.20@@@*'
+		js_project bun-allow; since_now
+		allowed_piped "bun $babel 7.22.5 (scoped)" "$babel" 7.22.5 60 sh -c "$bun_add" "$RUN_DIR/bun" "$babel@7.22.5"
+	else
+		results+=("skip  bun not installed")
+	fi
+	if have yarn && have corepack; then
+		export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 YARN_ENABLE_TELEMETRY=0
+		# yarn 4 keeps no file open in its cache for more than a moment, so
+		# gated finds no installer to warn; under Plug'n'Play, the project
+		# runs from the cache, and a denied package is gone from it.
+		local berry='cd "$JS_PROJECT" && YARN_GLOBAL_FOLDER="$0" yarn "$@"'
+		js_project yarn4-deny yarn@4.18.0; since_now
+		run "yarn 4 lodash 4.17.20" sh -c "$berry" "$RUN_DIR/yarn-berry" add lodash@4.17.20
+		local v; v=$(wait_verdict lodash 4.17.20)
+		check "yarn 4 lodash 4.17.20: denied" "$([ "$v" = DENIED ] && echo 1 || echo 0)" "verdict=$v"
+		check "yarn 4 lodash 4.17.20: no hang (<= 60s)" "$(le "$SECS" 60)" "${SECS}s rc=$RC"
+		results+=("info  yarn 4 lodash 4.17.20: $WARNED gated: lines in its output (yarn 4 holds nothing open in its cache to be found by)")
+		js_removed "yarn 4 lodash 4.17.20" 'yarn-berry/cache/lodash-npm-4.17.20-*.zip'
+		run "yarn 4 require lodash" sh -c "$berry" "$RUN_DIR/yarn-berry" node -e "require('lodash')"
+		check "yarn 4 lodash 4.17.20: unusable under Plug'n'Play" "$([ "$RC" != 0 ] && grep -q 'missing from disk' "$OUT" && echo 1 || echo 0)" "rc=$RC"
+		js_project yarn4-allow yarn@4.18.0; since_now
+		allowed_piped "yarn 4 $babel 7.22.5 (scoped)" "$babel" 7.22.5 60 sh -c "$berry" "$RUN_DIR/yarn-berry" add "$babel@7.22.5"
+		run "yarn 4 require $babel" sh -c "$berry" "$RUN_DIR/yarn-berry" node -e "require('$babel')"
+		check "yarn 4 $babel 7.22.5: usable under Plug'n'Play" "$([ "$RC" = 0 ] && echo 1 || echo 0)" "rc=$RC"
+
+		local classic='cd "$JS_PROJECT" && yarn add --non-interactive --cache-folder "$0" "$@"'
+		js_project yarn1-deny yarn@1.22.22; since_now
+		denied_piped "yarn 1 lodash 4.17.20" lodash 4.17.20 60 sh -c "$classic" "$RUN_DIR/yarn-classic" lodash@4.17.20
+		js_removed "yarn 1 lodash 4.17.20" 'yarn-classic/v6/npm-lodash-4.17.20-*'
+		# Again, the verdict is cached: gated removes it while yarn links it.
+		js_project yarn1-again yarn@1.22.22
+		run "yarn 1 lodash 4.17.20, again" sh -c "$classic" "$RUN_DIR/yarn-classic" lodash@4.17.20
+		check "yarn 1 lodash 4.17.20, again: blocked" "$([ "$RC" != 0 ] && [ "$RC" != 124 ] && echo 1 || echo 0)" "rc=$RC ${SECS}s"
+		check "yarn 1 lodash 4.17.20, again: warning in its output" "$([ "$WARNED" -gt 0 ] && echo 1 || echo 0)" "$WARNED gated: lines"
+		js_project yarn1-allow yarn@1.22.22; since_now
+		allowed_piped "yarn 1 $babel 7.22.5 (scoped)" "$babel" 7.22.5 60 sh -c "$classic" "$RUN_DIR/yarn-classic" "$babel@7.22.5"
+		unset COREPACK_ENABLE_DOWNLOAD_PROMPT YARN_ENABLE_TELEMETRY
+	else
+		results+=("skip  yarn (corepack) not installed")
+	fi
+	SINCE=0
 
 	if have cargo; then
 		mkdir -p cp/src && echo 'fn main() {}' > cp/src/main.rs && printf '[package]\nname = "ride"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\nsmallvec = "=1.6.0"\nserde = { version = "=1.0.200", features = ["derive"] }\n' > cp/Cargo.toml

@@ -55,13 +55,19 @@ it **in place** instead: it scans it where it lies and never holds it.
 |---|---|---|
 | go | the module zip in `cache/download` (go unpacks it at once) | the zip, its `.ziphash` and the unpacked module |
 | uv | the unpacked wheel in `archive-v0/<id>/` (uv never writes a `.whl`) | that directory |
+| bun | the unpacked package in `[@scope/]<name>@<version>@@@1/` (bun links it into `node_modules` at once) | that directory and bun's `<name>/<version>@@@1` link to it |
+| yarn (2+) | the package zip, `<name>-npm-<version>-<hash>-<key>.zip` (yarn opens it at once) | the zip |
+| yarn classic (1.x) | the unpacked package in `v6/npm-<name>-<version>-<sha1>-integrity/`, once yarn writes its `.yarn-metadata.json` | that directory |
 
 Removing these means the next install fetches the package again, and gated
 denies it from its verdict cache before anything unpacks it. A retried `go mod
-download` of a denied module fails. What the package manager already did with
-the package in the first run is out of gated's reach: uv has installed it, go may
-have built with it. The same goes for a held file that the package manager had
-already opened.
+download` of a denied module fails, and so does a retried yarn classic install:
+gated removes the package while yarn is still linking it. Under yarn's
+Plug'n'Play the project runs from the cache zips, so a denied package is gone
+for it ("Required package missing from disk"). What the package manager already
+did with the package in the first run is otherwise out of gated's reach: uv and
+bun have installed it, go may have built with it. The same goes for a held file
+that the package manager had already opened.
 
 When gated loses like this, it says so **in the package manager's own output**,
 where the person or CI job running it will see it:
@@ -81,7 +87,8 @@ milliseconds, so gated looks for one as soon as anything changes in the cache. I
 opens that process's stderr (`/proc/<pid>/fd/2`, append-only), so the warning
 gets through even after the process has exited. This works on Linux for processes
 gated may inspect: your own (user service) or anyone's (as root). Elsewhere the
-lost race appears in gated's log only. In `warn_only` mode the same message says
+lost race appears in gated's log only, and so it does for yarn 2+, which keeps no
+file open in its cache for more than a millisecond: there is no process to find. In `warn_only` mode the same message says
 the package *would be* denied.
 
 Holding a process's stderr has a cost when it is a pipe (`uv pip install … | tee`,
@@ -197,7 +204,18 @@ watch_paths:
     ecosystem: maven
   - path: ~/.cargo/registry
     ecosystem: cargo
+  - path: ~/.bun/install/cache     # bun
+    ecosystem: npm
+  - path: ~/.yarn/berry/cache      # yarn 2+ (global cache, the default)
+    ecosystem: npm
+  - path: ~/.cache/yarn            # yarn classic
+    ecosystem: npm
 ```
+
+bun and both yarns install from the npm registry, so their caches use the `npm`
+ecosystem; gated tells them apart by the cache's layout. A project that sets
+`enableGlobalCache: false` keeps its yarn cache in `.yarn/cache`: watch that
+instead.
 
 ### Ecosystem support
 
@@ -207,10 +225,17 @@ watch_paths:
 | Go | `@v/*.zip`, gated in place | `pkg:golang/module@version` |
 | Maven | `*.jar` | `pkg:maven/group/artifact@version` |
 | Cargo | `*.crate` | `pkg:cargo/name@version` |
-| npm | `*.tgz` (best-effort; scoped names read from the tarball's `package.json`) | `pkg:npm/name@version` |
+| npm | `*.tgz` (best-effort; scoped names read from the tarball's `package.json`); bun's, yarn's and yarn classic's caches, gated in place | `pkg:npm/name@version` |
 
 npm's content-addressed cache (`_cacache`) makes path-based resolution unreliable.
 For full npm coverage, watch `node_modules/` instead.
+
+yarn zips of anything but a registry package (`patch:`, as yarn applies to
+typescript, and `git:`, `file:` or tarball dependencies) are neither judged nor
+held; neither are bun's entries for git or tarball dependencies, whose
+`package.json` does not match the cache entry's name. pnpm is not supported yet:
+its store keeps no file per package, only content-addressed single files and a
+SQLite index.
 
 ## Policies
 
@@ -375,7 +400,7 @@ connections but can't block-and-resume a file open.
 **Quarantine as universal fallback.** Atomic rename works on every OS and needs no
 privileges. The race window (file exists briefly before quarantine) rarely matters
 for package managers that close a download before opening it for extraction. Those
-that unpack at once (go, uv) are gated in place, and told when gated was too late
+that unpack at once (go, uv, bun, yarn) are gated in place, and told when gated was too late
 (see [Racing the package manager](#racing-the-package-manager-quarantine-mode)).
 
 **Fail open on errors.** If a scan tool crashes or OPA eval fails, the artifact is
@@ -446,6 +471,9 @@ Install both with `./scripts/install-tools.sh` (system-wide) or
   `FAN_CLOSE_WRITE`), quarantine during download-to-open gap, and verdict caching.
   First-time installs of large dependency trees will be noticeably slower.
 - npm's content-addressed cache is poorly suited to path-based package resolution.
+- pnpm is not supported: its store holds no file per package to gate.
+- yarn 2+ is not warned in its own output when gated loses the race (see
+  [Racing the package manager](#racing-the-package-manager-quarantine-mode)).
 - Windows watcher is a stub. Three implementation strategies are documented in
   `watcher_windows.go` (ReadDirectoryChangesW, minifilter driver, ProjFS).
 

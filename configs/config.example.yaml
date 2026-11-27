@@ -25,6 +25,14 @@ watch_paths:
   # - path: ~/.npm
   #   ecosystem: npm
 
+  # bun and yarn caches (npm registry packages, gated in place).
+  - path: ~/.bun/install/cache
+    ecosystem: npm
+  - path: ~/.yarn/berry/cache    # yarn 2+
+    ecosystem: npm
+  - path: ~/.cache/yarn          # yarn classic
+    ecosystem: npm
+
 tools:
   syft: syft
   grype: grype

@@ -140,7 +140,7 @@ func isHiddenDir(path string) bool {
 		return false
 	}
 	switch base {
-	case ".m2", ".cache", ".cargo", ".npm":
+	case ".m2", ".cache", ".cargo", ".npm", ".bun", ".yarn":
 		return false
 	}
 	return true

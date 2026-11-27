@@ -15,6 +15,7 @@ import (
 //     would break every first download, allowed or not.
 //   - pypi (uv): uv never writes a wheel to disk. It unpacks the download
 //     into <cache>/archive-v0/<id>/ and installs from that directory.
+//   - npm (bun, yarn, yarn classic): see js.go.
 //
 // gated races the package manager for these: on a deny it removes Remove,
 // so the next install fetches (and gated judges) the package again, and
@@ -35,14 +36,24 @@ func ResolveInPlace(path, ecosystem string) *InPlace {
 		return goModuleZip(path)
 	case "pypi":
 		return uvArchive(path)
+	case "npm":
+		return jsInPlace(path)
 	}
 	return nil
+}
+
+// IsDerived reports whether path is a file a package manager made from
+// something other than a registry package, which gated neither judges nor
+// holds (see jsDerived).
+func IsDerived(path, ecosystem string) bool {
+	return ecosystem == "npm" && jsDerived(path)
 }
 
 // CacheRoot returns the cache of a package manager whose artifacts are
 // gated in place, if path lies in one: where its processes keep files open
 // while they work (go: lock files in cache/download; uv: <cache>/.lock and
-// its temporary extraction directories). "" otherwise.
+// its temporary extraction directories; bun and yarn: their cache
+// directory). "" otherwise.
 func CacheRoot(path, ecosystem string) string {
 	switch ecosystem {
 	case "go":
@@ -65,6 +76,8 @@ func CacheRoot(path, ecosystem string) string {
 				}
 			}
 		}
+	case "npm":
+		return jsCacheRoot(path)
 	}
 	return ""
 }
@@ -91,6 +104,8 @@ func IsUnpackedContent(path, ecosystem string) bool {
 		// <uv cache>/archive-v0/<id>/...: below the package directory.
 		_, rest, ok := strings.Cut(slash, "/archive-v0/")
 		return ok && strings.Contains(rest, "/")
+	case "npm":
+		return jsUnpackedContent(path)
 	}
 	return false
 }

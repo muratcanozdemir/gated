@@ -1,6 +1,7 @@
 package watcher
 
 import (
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -59,6 +60,10 @@ func dispatch(q *quarantine.Engine, handlers *sync.WaitGroup, path, ecosystem st
 	if ip := resolver.ResolveInPlace(path, ecosystem); ip != nil {
 		handlers.Go(func() { q.HandleInPlace(ip, ecosystem) })
 		return true
+	}
+	if resolver.IsDerived(path, ecosystem) {
+		slog.Info("not judged: no registry package of its own", "path", path, "ecosystem", ecosystem)
+		return false
 	}
 	if isMetadataFile(path) || !isArtifactFile(path) {
 		return false

@@ -24,6 +24,11 @@ import (
 const (
 	// activityRescan limits /proc scans for one cache: events come in bursts.
 	activityRescan = 100 * time.Millisecond
+	// activityRescanEmpty is the limit after a scan that found nobody: the
+	// package manager may have opened nothing yet (yarn classic creates a
+	// cache entry before writing to it, and a cached deny comes milliseconds
+	// after it is done), and a scan now must not hide it for activityRescan.
+	activityRescanEmpty = 10 * time.Millisecond
 	// installerTTL is how long a process found in a cache is kept after it
 	// was last seen there: longer than any scan.
 	installerTTL = 2 * time.Minute
@@ -36,6 +41,7 @@ const (
 type cacheActivity struct {
 	scanMu  sync.Mutex // one scan at a time; later callers wait for its result
 	scanned time.Time
+	found   bool // the last scan found a process
 	procs   map[int]*seenProcess
 }
 
@@ -71,7 +77,11 @@ func (e *Engine) NoteActivity(root string) {
 	a.scanMu.Lock()
 	defer a.scanMu.Unlock()
 	r.mu.Lock()
-	if time.Since(a.scanned) < activityRescan {
+	wait := activityRescan
+	if !a.found {
+		wait = activityRescanEmpty
+	}
+	if time.Since(a.scanned) < wait {
 		r.mu.Unlock()
 		return
 	}
@@ -83,6 +93,7 @@ func (e *Engine) NoteActivity(root string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	a.scanned = now
+	a.found = len(found) > 0
 	for _, p := range found {
 		if old, ok := a.procs[p.PID]; ok && old.Comm == p.Comm {
 			old.seen = now
