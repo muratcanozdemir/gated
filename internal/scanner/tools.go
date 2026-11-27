@@ -101,6 +101,24 @@ type grypeOutput struct {
 type grypeMatch struct {
 	Vulnerability          grypeVuln          `json:"vulnerability"`
 	RelatedVulnerabilities []grypeExploitInfo `json:"relatedVulnerabilities"`
+	Artifact               grypeArtifact      `json:"artifact"`
+}
+
+// grypeArtifact is the package grype matched the vulnerability against.
+type grypeArtifact struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Type    string `json:"type"`
+	PURL    string `json:"purl"`
+}
+
+// notInstalled are grype artifact types for files a package carries but
+// that nobody who installs it runs: its own CI workflows (.github/workflows)
+// and the GitHub Actions they use. An advisory for actions/download-artifact
+// says nothing about a Go module whose CI happens to use it.
+var notInstalled = map[string]bool{
+	"github-action":          true,
+	"github-action-workflow": true,
 }
 
 type grypeVuln struct {
@@ -169,6 +187,9 @@ func parseGrype(report []byte) ([]Vulnerability, error) {
 
 	var vulns []Vulnerability
 	for _, m := range out.Matches {
+		if notInstalled[m.Artifact.Type] {
+			continue
+		}
 		v := Vulnerability{
 			ID:          m.Vulnerability.ID,
 			Severity:    strings.ToLower(m.Vulnerability.Severity),

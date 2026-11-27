@@ -152,3 +152,22 @@ func TestDedupMergesExploitData(t *testing.T) {
 		t.Fatalf("dedup:\n got %+v\nwant %+v", out, want)
 	}
 }
+
+// A package's own CI (.github/workflows) is not installed with it: grype's
+// matches on the GitHub Actions it uses are dropped.
+func TestParseGrype_SkipsCIActions(t *testing.T) {
+	got, err := parseGrype([]byte(`{"matches": [
+	  {"vulnerability": {"id": "GHSA-cxww-7g56-2vh6", "severity": "High", "fix": {"versions": ["4.1.3"]}, "cvss": []},
+	   "artifact": {"name": "actions/download-artifact", "version": "v4", "type": "github-action"}},
+	  {"vulnerability": {"id": "GHSA-0000-0000-0000", "severity": "High", "fix": {"versions": []}, "cvss": []},
+	   "artifact": {"name": ".github/workflows/ci.yml", "type": "github-action-workflow"}},
+	  {"vulnerability": {"id": "CVE-1", "severity": "High", "fix": {"versions": []}, "cvss": []},
+	   "artifact": {"name": "golang.org/x/net", "version": "v0.59.0", "type": "go-module"}}
+	]}`))
+	if err != nil {
+		t.Fatalf("parseGrype: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "CVE-1" {
+		t.Fatalf("got %+v, want only CVE-1", got)
+	}
+}
