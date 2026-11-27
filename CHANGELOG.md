@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.1](https://github.com/muratcanozdemir/gated/compare/v1.0.0...v1.0.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **quarantine:** find a fast uv on the first install into a new cache, and when a cache scan is already running ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **quarantine:** hold a package manager's output only for its own pending verdicts, not for others in the same cache ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **quarantine:** remove a denied Go module even while go is still unpacking it ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **quarantine:** stop hanging pipelines that read a package manager's output (gated held the pipe open after the package manager exited) ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **resolver:** scan jars in a local Maven repository outside "repository/" (they were allowed unscanned) ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **scanner:** find Go module licenses (every Go module was denied for "no license" under the service), without letting syft's go toolchain download dependencies ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **scanner:** read free-text license names that state license and version ("Apache License, Version 2.0") as SPDX ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **scanner:** refresh grype's database in the background, so a scan never stops to download it ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **scanner:** run at most half the CPUs' worth of scans at once ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+* **watcher:** never gate a package manager's hidden staging directory (uv's .tmpXXXX), and finish holding or releasing files before stopping ([292041b](https://github.com/muratcanozdemir/gated/commit/292041b338398b2f9b3a9c1bd94322fc13f17ad6))
+
 ## [1.0.0](https://github.com/muratcanozdemir/gated/compare/v0.2.0...v1.0.0) (2026-11-25)
 
 
