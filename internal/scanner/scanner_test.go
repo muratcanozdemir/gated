@@ -152,3 +152,103 @@ func TestDedupMergesExploitData(t *testing.T) {
 		t.Fatalf("dedup:\n got %+v\nwant %+v", out, want)
 	}
 }
+
+// Shaped like grype's report for golang.org/x/tools/gopls@v0.24.0 and
+// github.com/segmentio/encoding@v0.5.4: matches against go.mod requirements,
+// and one against a GitHub Action the module's own CI uses.
+const grypeDependencyReport = `{"matches": [
+  {
+    "vulnerability": {"id": "GO-2026-6860", "severity": "High", "fix": {"versions": ["0.62.0"]}, "cvss": []},
+    "artifact": {"name": "golang.org/x/net", "version": "v0.59.0", "type": "go-module", "purl": "pkg:golang/golang.org/x/net@v0.59.0"}
+  },
+  {
+    "vulnerability": {"id": "GO-2026-0001", "severity": "High", "fix": {"versions": ["0.25.0"]}, "cvss": []},
+    "artifact": {"name": "golang.org/x/tools/gopls", "version": "v0.24.0", "type": "go-module", "purl": "pkg:golang/golang.org/x/tools/gopls@v0.24.0"}
+  },
+  {
+    "vulnerability": {"id": "GHSA-cxww-7g56-2vh6", "severity": "High", "fix": {"versions": ["4.1.3"]}, "cvss": []},
+    "artifact": {"name": "actions/download-artifact", "version": "v4", "type": "github-action", "purl": "pkg:github/actions/download-artifact@v4"}
+  }
+]}`
+
+func TestParseGrype_DependenciesAndCI(t *testing.T) {
+	got, err := parseGrype([]byte(grypeDependencyReport))
+	if err != nil {
+		t.Fatalf("parseGrype: %v", err)
+	}
+	markDependencies(&resolver.Package{Ecosystem: "go", Name: "golang.org/x/tools/gopls", Version: "v0.24.0"}, got)
+	type summary struct{ ID, Dependency, DependencyVersion, FixedIn string }
+	var sum []summary
+	for _, v := range got {
+		sum = append(sum, summary{v.ID, v.Dependency, v.DependencyVersion, v.FixedIn})
+	}
+	want := []summary{
+		{"GO-2026-6860", "golang.org/x/net", "v0.59.0", "0.62.0"}, // in a dependency
+		{"GO-2026-0001", "", "", "0.25.0"},                        // in the module itself
+		// the GitHub Action is dropped: the module's CI is not installed
+	}
+	if !reflect.DeepEqual(sum, want) {
+		t.Fatalf("got %+v\nwant %+v", sum, want)
+	}
+}
+
+func TestMarkDependencies_SamePackage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pkg  resolver.Package
+		art  grypeArtifact
+		dep  string
+	}{
+		{"pypi name in another form", resolver.Package{Ecosystem: "pypi", Name: "pyyaml", Version: "5.3.1"},
+			grypeArtifact{Name: "PyYAML", Version: "5.3.1", PURL: "pkg:pypi/PyYAML@5.3.1"}, ""},
+		{"npm scoped", resolver.Package{Ecosystem: "npm", Name: "@babel/core", Version: "7.0.0"},
+			grypeArtifact{Name: "@babel/core", Version: "7.0.0", PURL: "pkg:npm/%40babel/core@7.0.0"}, ""},
+		{"jar with a guessed groupId", resolver.Package{Ecosystem: "maven", Name: "org.apache.logging.log4j:log4j-core", Version: "2.14.1"},
+			grypeArtifact{Name: "log4j-core", Version: "2.14.1", PURL: "pkg:maven/log4j-core/log4j-core@2.14.1"}, ""},
+		{"library bundled in a jar", resolver.Package{Ecosystem: "maven", Name: "com.example:app", Version: "1.0"},
+			grypeArtifact{Name: "log4j-core", Version: "2.14.1", PURL: "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1"}, "log4j-core"},
+		{"no package URL", resolver.Package{Ecosystem: "go", Name: "example.com/m", Version: "v1.0.0"},
+			grypeArtifact{Name: "golang.org/x/net", Version: "v0.59.0"}, ""},
+		{"qualifiers", resolver.Package{Ecosystem: "cargo", Name: "serde", Version: "1.0.0"},
+			grypeArtifact{Name: "serde", Version: "1.0.0", PURL: "pkg:cargo/serde@1.0.0?arch=x86_64"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := []Vulnerability{{ID: "CVE-1", matched: tc.art}}
+			markDependencies(&tc.pkg, v)
+			if v[0].Dependency != tc.dep {
+				t.Fatalf("Dependency = %q, want %q", v[0].Dependency, tc.dep)
+			}
+		})
+	}
+}
+
+// The package URL lookup finds a vulnerability in the package itself that
+// the byte scan attributed to a dependency: the package's own report wins.
+func TestDedup_OwnReportWins(t *testing.T) {
+	out := dedup([]Vulnerability{
+		{ID: "CVE-1", Dependency: "dep", DependencyVersion: "1.0"},
+		{ID: "CVE-1"},
+	})
+	if len(out) != 1 || out[0].Dependency != "" || out[0].DependencyVersion != "" {
+		t.Fatalf("got %+v", out)
+	}
+}
+
+// A package's own CI (.github/workflows) is not installed with it: grype's
+// matches on the GitHub Actions it uses are dropped.
+func TestParseGrype_SkipsCIActions(t *testing.T) {
+	got, err := parseGrype([]byte(`{"matches": [
+	  {"vulnerability": {"id": "GHSA-cxww-7g56-2vh6", "severity": "High", "fix": {"versions": ["4.1.3"]}, "cvss": []},
+	   "artifact": {"name": "actions/download-artifact", "version": "v4", "type": "github-action"}},
+	  {"vulnerability": {"id": "GHSA-0000-0000-0000", "severity": "High", "fix": {"versions": []}, "cvss": []},
+	   "artifact": {"name": ".github/workflows/ci.yml", "type": "github-action-workflow"}},
+	  {"vulnerability": {"id": "CVE-1", "severity": "High", "fix": {"versions": []}, "cvss": []},
+	   "artifact": {"name": "golang.org/x/net", "version": "v0.59.0", "type": "go-module"}}
+	]}`))
+	if err != nil {
+		t.Fatalf("parseGrype: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "CVE-1" {
+		t.Fatalf("got %+v, want only CVE-1", got)
+	}
+}

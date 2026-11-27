@@ -267,6 +267,21 @@ Severity-gated with nuance:
 - More distinct vulnerability IDs than `max_total_vulnerabilities`: denied (a
   CVE reported by both the byte scan and the package URL lookup counts once).
 
+A vulnerability is often in a dependency inside the package rather than the
+package itself: a module its `go.mod` requires, a library bundled in its jar.
+The message then names the dependency, and the fix version is the
+dependency's:
+
+```
+fixable high-severity vulnerability GO-2026-6860 in golang.org/x/net@v0.59.0
+  (a dependency of golang.org/x/tools/gopls@v0.24.0) — upgrade golang.org/x/net to 0.62.0
+```
+
+The package may have no release with the fixed dependency yet (here gopls
+v0.24.0 is the latest); a waiver is then the way to install it. Files a package
+carries but nobody who installs it runs are not matched: its own CI workflows
+and the GitHub Actions they use (`.github/workflows`).
+
 Exploitation data is live: grype's vulnerability DB carries CISA KEV and FIRST
 EPSS (grype ≥ 0.88; `install-tools.sh` pins 0.122.1), grype refreshes it on its
 own, and gated passes it to the policy for each vulnerability, including the CVE
@@ -291,6 +306,55 @@ on reload and by `gated -validate`:
 
 `packages` is optional; without it the waiver applies to every package. A waiver
 keyed by a CVE also covers the same vulnerability reported under a GHSA ID.
+
+Entries in `packages` are `<ecosystem>/<name>` of the package being installed
+(ecosystems: `pypi`, `npm`, `go`, `cargo`, `maven`; Maven names are
+`groupId:artifactId`). For a vulnerability in a dependency, that is still the
+package that carries it, not the dependency.
+
+#### Example: waiving a dependency's vulnerability
+
+`go install golang.org/x/tools/gopls@latest` is denied:
+
+```
+gated: golang.org/x/tools/gopls@v0.24.0 DENIED
+gated:   - fixable high-severity vulnerability GO-2026-6860 in golang.org/x/net@v0.59.0
+           (a dependency of golang.org/x/tools/gopls@v0.24.0) — upgrade golang.org/x/net to 0.62.0
+```
+
+No gopls release requires a fixed x/net yet. Waive the ID for gopls only, until
+a date by which a release should be out. The modules gopls itself requires are
+gated one by one as `go` downloads them, so a waiver may need the same ID for
+those too (here `golang.org/x/tools`). Add every ID from the denial at once:
+
+```json
+"vulnerability_waivers": {
+  "GO-2026-6860": {
+    "reason": "gopls v0.24.0 (latest) requires golang.org/x/net v0.59.0; drop once a gopls release requires >= 0.62.0",
+    "expires": "2027-01-31",
+    "packages": ["go/golang.org/x/tools/gopls", "go/golang.org/x/tools"]
+  }
+}
+```
+
+The file is `data.json` in the daemon's `policy_dir`: `/etc/gated/policy` for
+the system service, `~/.config/gated/policy` for the user service. Then check
+it, reload, and retry:
+
+```bash
+# Check config and policies (and list malformed or expired waivers)
+gated -validate -config ~/.config/gated/config.yaml
+
+# Reload the user service (system service: sudo systemctl reload gated)
+systemctl --user reload gated
+journalctl --user -u gated -n 5 -o cat   # "policy reload complete"
+
+go install golang.org/x/tools/gopls@latest
+```
+
+If the policies do not compile, the reload logs `policy reload validation
+failed, keeping old policies` and the daemon keeps running on the old ones.
+A reload also empties the verdict cache, so earlier denials are scanned again.
 
 ### provenance.rego
 

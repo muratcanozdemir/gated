@@ -172,6 +172,16 @@ EOF
 			"$([ ! -e "$GOMODCACHE/cache/download/golang.org/x/text/@v/v0.3.5.zip" ] && echo 1 || echo 0)" ""
 		allowed_piped "go uuid v1.4.0 (license from LICENSE)" github.com/google/uuid v1.4.0 20 go mod download github.com/google/uuid@v1.4.0
 		allowed_piped "go cobra v1.7.0 (has dependencies)" github.com/spf13/cobra v1.7.0 20 go mod download github.com/spf13/cobra@v1.7.0
+		# Its CI uses actions/download-artifact v4 (GHSA-cxww-7g56-2vh6, high,
+		# fixed in 4.1.3): nobody who installs the module runs its CI, and
+		# without that match nothing denies it.
+		allowed_piped "go segmentio/encoding v0.5.4 (its CI's Action not matched)" github.com/segmentio/encoding v0.5.4 30 \
+			go mod download github.com/segmentio/encoding@v0.5.4
+		# Its go.mod requires a vulnerable golang.org/x/net: the denial names
+		# x/net and x/net's fix, not a gin release that does not exist.
+		denied_piped "go gin v1.9.0 (vulnerable dependency)" github.com/gin-gonic/gin v1.9.0 30 go mod download github.com/gin-gonic/gin@v1.9.0
+		check "go gin v1.9.0: names the dependency and its fix" \
+			"$(grep -q 'in golang.org/x/net@[^ ]* (a dependency of github.com/gin-gonic/gin@v1.9.0) — upgrade golang.org/x/net to ' "$OUT" && echo 1 || echo 0)" ""
 		check "go: syft downloaded nothing into the watched cache" \
 			"$([ ! -d "$GOMODCACHE/cache/download/github.com/spf13/pflag" ] || [ -n "$(journal | jq -r 'select(.pkg=="github.com/spf13/pflag")' | head -1)" ] && echo 1 || echo 0)" ""
 		mkdir -p gp && printf 'module ride\n\ngo 1.22\n\nrequire golang.org/x/text v0.3.6\n' > gp/go.mod \

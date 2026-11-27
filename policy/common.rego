@@ -8,12 +8,18 @@ package gate
 #   {
 #     "package":         {"ecosystem": "pypi", "name": "requests", "version": "2.31.0"},
 #     "licenses":        ["Apache-2.0"],
-#     "vulnerabilities": [{"id": "CVE-…", "severity": "high", "cvss": 7.5, "fixed_in": "2.32.0", "source": "grype"}],
+#     "vulnerabilities": [{"id": "CVE-…", "severity": "high", "cvss": 7.5, "fixed_in": "2.32.0", "source": "grype"},
+#                         {"id": "GO-…", "severity": "high", "fixed_in": "0.62.0", "source": "grype",
+#                          "dependency": "golang.org/x/net", "dependency_version": "v0.59.0"}],
 #     "errors":          ["syft: …"]
 #   }
 #
-# The daemon encodes an empty Go slice as null and omits empty "errors" and
-# "fixed_in", so every rule reads the input through the helpers below rather
+# "dependency" is set when the vulnerability is in something inside the
+# package (a go.mod requirement, a bundled jar), and "fixed_in" is then that
+# dependency's version.
+#
+# The daemon encodes an empty Go slice as null and omits empty "errors",
+# "fixed_in" and "dependency", so every rule reads the input through the helpers below rather
 # than directly: a missing or null field must never make a deny rule
 # undefined (that would fail open).
 #

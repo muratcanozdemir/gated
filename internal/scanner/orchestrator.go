@@ -126,6 +126,7 @@ func (o *Orchestrator) Scan(pkg *resolver.Package) (*ScanResult, error) {
 			fail("grype", err)
 			return
 		}
+		markDependencies(pkg, v)
 		vulns = v
 	}()
 	go func() {
@@ -205,6 +206,11 @@ func dedup(vulns []Vulnerability) []Vulnerability {
 			continue
 		}
 		kept := &out[i]
+		if v.Dependency == "" {
+			// Found in the package itself too (the package URL lookup):
+			// that is the more direct report.
+			kept.Dependency, kept.DependencyVersion = "", ""
+		}
 		for _, a := range v.Aliases {
 			if !slices.Contains(kept.Aliases, a) {
 				kept.Aliases = append(kept.Aliases, a)
