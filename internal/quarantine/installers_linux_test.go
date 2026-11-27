@@ -83,3 +83,35 @@ func eof(t *testing.T, r *os.File, d time.Duration) bool {
 		}
 	}
 }
+
+// yarn classic creates a cache entry before it opens anything there, and a
+// cached deny comes milliseconds after the entry is done: a scan that found
+// nobody must not keep the next one from finding the installer.
+func TestNoteActivityRescansSoonAfterFindingNobody(t *testing.T) {
+	cache := t.TempDir()
+	e := NewEngine(nil, false)
+	e.NoteActivity(cache) // the entry appears; nothing is open yet
+
+	file := filepath.Join(cache, "entry")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", `exec 3<"$1"; echo ready; read _`, "sh", file)
+	stdin, _ := cmd.StdinPipe()
+	stdout, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close(); _ = cmd.Wait() }()
+	if _, err := stdout.Read(make([]byte, 6)); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(20 * time.Millisecond) // well within activityRescan
+	e.NoteActivity(cache)
+	procs, release := e.installersOf(cache)
+	defer release()
+	if len(procs) != 1 {
+		t.Fatalf("found %d installers: the scan that found nobody hid the one that came after", len(procs))
+	}
+}
