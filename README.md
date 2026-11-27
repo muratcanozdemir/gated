@@ -293,7 +293,8 @@ scan fails open (or is denied with `require_clean_scan`).
 #### Waivers
 
 Accept a vulnerability for a while with a waiver in `vulnerability_waivers`,
-keyed by vulnerability ID:
+keyed by vulnerability ID. Ready-to-merge files for the examples below, with
+the steps to add one, are in [`docs/examples`](https://github.com/muratcanozdemir/gated/tree/main/docs/examples).
 
 ```json
 "vulnerability_waivers": {
@@ -359,12 +360,12 @@ Each ID is its own entry; a Maven package is named `groupId:artifactId`:
   },
   "GHSA-7rjr-3q55-vv33": {
     "reason": "only in the offline report tool, which logs no untrusted input; jar replaced in OPS-412",
-    "expires": "2026-12-15",
+    "expires": "2027-03-15",
     "packages": ["maven/org.apache.logging.log4j:log4j-core"]
   },
   "CVE-2025-9999": {
     "reason": "disputed by upstream, NVD reanalysis pending",
-    "expires": "2026-12-31"
+    "expires": "2027-02-28"
   }
 }
 ```
@@ -400,8 +401,9 @@ those too (here `golang.org/x/tools`). Add every ID from the denial at once:
 ##### Applying and checking waivers
 
 The file is `data.json` in the daemon's `policy_dir`: `/etc/gated/policy` for
-the system service, `~/.config/gated/policy` for the user service. Then check
-it, reload, and retry:
+the system service, `~/.config/gated/policy` for the user service. gated reads
+it only at startup and on reload, so **a waiver does nothing until you reload
+the daemon**. Check it, reload, and retry:
 
 ```bash
 # Check config and policies (and list malformed or expired waivers)
