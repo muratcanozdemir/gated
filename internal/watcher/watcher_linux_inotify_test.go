@@ -180,3 +180,67 @@ func TestInotify_HiddenStagingDirNotGated(t *testing.T) {
 	writeArtifact(t, filepath.Join(root, "after.crate")) // the watcher is live
 	expectGated(t, gated, "after.crate")
 }
+
+// yarn classic creates its cache entry where it stays and fills it file by
+// file: the entry is gated in place only once yarn writes .yarn-metadata.json,
+// its last file, and what yarn writes before is not gated at all.
+func TestInotify_YarnClassicGatedWhenComplete(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "v6")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gated := startInotify(t, root, "npm")
+
+	entry := filepath.Join(cache, "npm-@babel-x-1.0.0-533f36457a25814cf1df6488523ad547d784a99f-integrity")
+	pkg := filepath.Join(entry, "node_modules", "@babel", "x")
+	if err := os.MkdirAll(filepath.Join(pkg, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeArtifact(t, filepath.Join(pkg, ".yarn-tarball.tgz"))
+	writeArtifact(t, filepath.Join(pkg, "lib", "fixture.zip"))
+	if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"name": "@babel/x", "version": "1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-gated:
+		t.Fatalf("gated %s before yarn finished the entry", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := os.WriteFile(filepath.Join(pkg, ".yarn-metadata.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectGated(t, gated, filepath.Base(entry))
+	select {
+	case got := <-gated:
+		t.Fatalf("also gated %s: content of a yarn entry is not an artifact", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// bun unpacks a package elsewhere and renames it into its cache, under a
+// scope directory it creates just before: gated in place, once.
+func TestInotify_BunScopedGatedInPlace(t *testing.T) {
+	root := t.TempDir()
+	gated := startInotify(t, root, "npm")
+	tmp := filepath.Join(root, ".tmp", ".e7151c597de0f0b4-2.x")
+	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(`{"name": "@babel/x", "version": "1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeArtifact(t, filepath.Join(tmp, "lib", "fixture.tgz"))
+	if err := os.Mkdir(filepath.Join(root, "@babel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, filepath.Join(root, "@babel", "x@1.0.0@@@1")); err != nil {
+		t.Fatal(err)
+	}
+	expectGated(t, gated, "x@1.0.0@@@1")
+	select {
+	case got := <-gated:
+		t.Fatalf("also gated %s", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+}

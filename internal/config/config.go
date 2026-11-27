@@ -22,7 +22,7 @@ type Config struct {
 
 type WatchPath struct {
 	Path      string `yaml:"path"`
-	Ecosystem string `yaml:"ecosystem"` // pypi, go, maven, cargo, npm
+	Ecosystem string `yaml:"ecosystem"` // pypi, go, maven, cargo, npm (also bun, yarn)
 }
 
 type Tools struct {
