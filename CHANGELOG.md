@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/muratcanozdemir/gated/compare/v1.0.1...v1.1.0) (2026-11-27)
+
+
+### Features
+
+* gate bun, yarn and yarn classic installs ([#27](https://github.com/muratcanozdemir/gated/issues/27)) ([6957430](https://github.com/muratcanozdemir/gated/commit/69574306abdc996a2a2fd102c6f55fc922634ab6))
+
 ## [1.0.1](https://github.com/muratcanozdemir/gated/compare/v1.0.0...v1.0.1) (2026-11-27)
 
 
