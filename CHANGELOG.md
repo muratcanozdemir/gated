@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/muratcanozdemir/gated/compare/v1.1.0...v1.1.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* name the dependency a vulnerability is in, and stop matching a package's CI Actions ([#29](https://github.com/muratcanozdemir/gated/issues/29)) ([a8b8fae](https://github.com/muratcanozdemir/gated/commit/a8b8faeeccbfcaef26e4540ee91aaf5fb108db84))
+
 ## [1.1.0](https://github.com/muratcanozdemir/gated/compare/v1.0.1...v1.1.0) (2026-11-27)
 
 
