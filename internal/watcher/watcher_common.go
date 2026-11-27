@@ -3,6 +3,7 @@ package watcher
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/muratcanozdemir/gated/internal/config"
@@ -47,18 +48,22 @@ func isMetadataFile(path string) bool {
 // package manager uses the moment they land (resolver.InPlace), held
 // otherwise. It runs async so the event loop isn't blocked. Returns false if
 // path is not an artifact to gate.
-func dispatch(q *quarantine.Engine, path, ecosystem string) bool {
+//
+// The handler runs in a goroutine counted in handlers: a watcher's Run waits
+// for them before it returns, so that nothing is still holding or restoring a
+// file once the watcher is stopped.
+func dispatch(q *quarantine.Engine, handlers *sync.WaitGroup, path, ecosystem string) bool {
 	if quarantine.IsQuarantinePath(path) || resolver.IsUnpackedContent(path, ecosystem) {
 		return false
 	}
 	if ip := resolver.ResolveInPlace(path, ecosystem); ip != nil {
-		go q.HandleInPlace(ip, ecosystem)
+		handlers.Go(func() { q.HandleInPlace(ip, ecosystem) })
 		return true
 	}
 	if isMetadataFile(path) || !isArtifactFile(path) {
 		return false
 	}
-	go q.HandleNewArtifact(path, ecosystem)
+	handlers.Go(func() { q.HandleNewArtifact(path, ecosystem) })
 	return true
 }
 
