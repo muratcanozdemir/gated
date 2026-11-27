@@ -116,6 +116,12 @@ func main() {
 				pkg = ip.Pkg
 			}
 		}
+		if pkg == nil && ecosystem == "maven" {
+			// A local repository not under "repository/": the jar says.
+			if pkg = resolver.ResolveMavenJar(idPath, path); pkg != nil {
+				pkg.Path = path
+			}
+		}
 		if pkg == nil {
 			// Watchers only hand over artifact files, so this is unusual:
 			// make it visible rather than allowing silently.
